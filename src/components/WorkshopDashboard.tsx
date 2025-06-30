@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext';
 import WorkshopOrderDetails from './WorkshopOrderDetails';
 import AccountManagement from './AccountManagement';
 import ArchiveView from './ArchiveView';
+import CreateOrder from './CreateOrder';
 import { Order } from '../types';
 
 export default function WorkshopDashboard() {
@@ -14,6 +15,7 @@ export default function WorkshopDashboard() {
   const [showAccountManagement, setShowAccountManagement] = useState(false);
   const [viewMode, setViewMode] = useState<'all' | 'assigned'>('all');
   const [showArchive, setShowArchive] = useState(false);
+  const [showCreateOrder, setShowCreateOrder] = useState(false);
 
   // Filter orders based on user role and view mode
   const getFilteredOrders = () => {
@@ -187,9 +189,31 @@ export default function WorkshopDashboard() {
               Benutzerverwaltung
             </button>
           )}
+          {(state.currentUser?.role === 'admin' || state.currentUser?.role === 'workshop') && (
+            <button
+              onClick={() => setShowCreateOrder(true)}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center"
+            >
+              + Auftrag anlegen
+            </button>
+          )}
         </div>
       </div>
-
+      {/* Modal für Auftragserstellung */}
+      {showCreateOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto relative">
+            <button
+              onClick={() => setShowCreateOrder(false)}
+              className="absolute top-2 right-2 text-gray-400 hover:text-gray-600 text-xl"
+              aria-label="Schließen"
+            >
+              ×
+            </button>
+            <CreateOrder onClose={() => setShowCreateOrder(false)} />
+          </div>
+        </div>
+      )}
       {/* My Subtasks Section for Workshop Users */}
       {state.currentUser?.role === 'workshop' && mySubTasks.length > 0 && (
         <div className="bg-blue-50 rounded-lg p-6 mb-6">

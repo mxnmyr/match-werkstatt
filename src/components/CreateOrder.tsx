@@ -144,8 +144,6 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
     });
   };
 
-  const isApproved = state.currentUser?.isApproved; // Annahme: Der Benutzerstatus ist im Kontext verfügbar
-
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="bg-white rounded-lg shadow-sm border">
@@ -160,12 +158,6 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-6">
-          {!isApproved && (
-            <div className="bg-yellow-100 text-yellow-800 p-3 rounded mb-2 text-sm">
-              Ihr Account wurde noch nicht von der Administration bestätigt. Sie können noch keine Aufträge einreichen.
-            </div>
-          )}
-
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="md:col-span-2">
               <label htmlFor="title" className="block text-sm font-medium text-gray-700 mb-2">
@@ -318,8 +310,7 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
             </button>
             <button
               type="submit"
-              disabled={!isApproved}
-              className={`px-5 py-2 rounded-lg text-white font-semibold text-base transition-colors ${!isApproved ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+              className="px-5 py-2 rounded-lg text-white font-semibold text-base transition-colors bg-blue-600 hover:bg-blue-700"
               style={{ minWidth: 180 }}
             >
               Auftrag einreichen
