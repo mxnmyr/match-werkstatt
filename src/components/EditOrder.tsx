@@ -1,0 +1,253 @@
+import React, { useState } from 'react';
+import { X, Upload, FileText, Trash2, Save } from 'lucide-react';
+import { useApp } from '../context/AppContext';
+import { Order, PDFDocument } from '../types';
+
+interface EditOrderProps {
+  order: Order;
+  onClose: () => void;
+}
+
+export default function EditOrder({ order, onClose }: EditOrderProps) {
+  const { dispatch } = useApp();
+  const [title, setTitle] = useState(order.title);
+  const [description, setDescription] = useState(order.description);
+  const [deadline, setDeadline] = useState(new Date(order.deadline).toISOString().split('T')[0]);
+  const [costCenter, setCostCenter] = useState(order.costCenter);
+  const [priority, setPriority] = useState<'low' | 'medium' | 'high'>(order.priority);
+  const [documents, setDocuments] = useState<PDFDocument[]>(order.documents);
+  const [dragActive, setDragActive] = useState(false);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    const updatedOrder: Order = {
+      ...order,
+      title,
+      description,
+      deadline: new Date(deadline),
+      costCenter,
+      priority,
+      documents,
+      status: 'pending', // Reset to pending when resubmitted
+      canEdit: false,
+      updatedAt: new Date()
+    };
+
+    dispatch({ type: 'UPDATE_ORDER', payload: updatedOrder });
+    dispatch({ 
+      type: 'SHOW_NOTIFICATION', 
+      payload: { message: 'Auftrag wurde erfolgreich überarbeitet und erneut eingereicht', type: 'success' }
+    });
+    onClose();
+  };
+
+  const handleFileUpload = (files: FileList | null) => {
+    if (!files) return;
+
+    Array.from(files).forEach(file => {
+      if (file.type === 'application/pdf') {
+        const document: PDFDocument = {
+          id: `doc_${Date.now()}_${Math.random()}`,
+          name: file.name,
+          url: URL.createObjectURL(file),
+          uploadDate: new Date(),
+          file: file
+        };
+        setDocuments(prev => [...prev, document]);
+      }
+    });
+  };
+
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true);
+    } else if (e.type === 'dragleave') {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    handleFileUpload(e.dataTransfer.files);
+  };
+
+  const removeDocument = (id: string) => {
+    setDocuments(prev => {
+      const docToRemove = prev.find(doc => doc.id === id);
+      if (docToRemove?.url) {
+        URL.revokeObjectURL(docToRemove.url);
+      }
+      return prev.filter(doc => doc.id !== id);
+    });
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="bg-white rounded-lg shadow-sm border">
+        <div className="flex justify-between items-center p-6 border-b">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">Auftrag überarbeiten</h2>
+            <p className="text-orange-600 text-sm mt-1">
+              Dieser Auftrag wurde zur Überarbeitung zurückgeschickt
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="md:col-span-2">
+              <label htmlFor="title" className="block text-sm font-medium text-gray-700 mb-2">
+                Auftragstitel *
+              </label>
+              <input
+                type="text"
+                id="title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                required
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
+                Beschreibung *
+              </label>
+              <textarea
+                id="description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={4}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                required
+              />
+            </div>
+
+            <div>
+              <label htmlFor="deadline" className="block text-sm font-medium text-gray-700 mb-2">
+                Deadline *
+              </label>
+              <input
+                type="date"
+                id="deadline"
+                value={deadline}
+                onChange={(e) => setDeadline(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                required
+              />
+            </div>
+
+            <div>
+              <label htmlFor="costCenter" className="block text-sm font-medium text-gray-700 mb-2">
+                Kostenstelle *
+              </label>
+              <input
+                type="text"
+                id="costCenter"
+                value={costCenter}
+                onChange={(e) => setCostCenter(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="z.B. KOSTEN-001"
+                required
+              />
+            </div>
+
+            <div>
+              <label htmlFor="priority" className="block text-sm font-medium text-gray-700 mb-2">
+                Priorität
+              </label>
+              <select
+                id="priority"
+                value={priority}
+                onChange={(e) => setPriority(e.target.value as 'low' | 'medium' | 'high')}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="low">Niedrig</option>
+                <option value="medium">Mittel</option>
+                <option value="high">Hoch</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              PDF Dokumente
+            </label>
+            <div
+              className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+                dragActive
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-300 hover:border-gray-400'
+              }`}
+              onDragEnter={handleDrag}
+              onDragLeave={handleDrag}
+              onDragOver={handleDrag}
+              onDrop={handleDrop}
+            >
+              <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <p className="text-gray-600 mb-2">PDF-Dateien hier ablegen oder</p>
+              <label className="cursor-pointer">
+                <span className="text-blue-600 hover:text-blue-800">Dateien auswählen</span>
+                <input
+                  type="file"
+                  multiple
+                  accept=".pdf"
+                  onChange={(e) => handleFileUpload(e.target.files)}
+                  className="hidden"
+                />
+              </label>
+            </div>
+
+            {documents.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {documents.map((doc) => (
+                  <div key={doc.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center">
+                      <FileText className="w-5 h-5 text-red-600 mr-3" />
+                      <span className="text-sm text-gray-900">{doc.name}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeDocument(doc.id)}
+                      className="text-red-600 hover:text-red-800 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-6 border-t">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              Abbrechen
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center"
+            >
+              <Save className="w-4 h-4 mr-2" />
+              Überarbeitung einreichen
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
