@@ -16,6 +16,7 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
   const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium');
   const [documents, setDocuments] = useState<PDFDocument[]>([]);
   const [dragActive, setDragActive] = useState(false);
+  const [orderType, setOrderType] = useState<'fertigung' | 'service'>('fertigung');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,7 +38,8 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
       notes: '',
       createdAt: new Date(),
       updatedAt: new Date(),
-      subTasks: []
+      subTasks: [],
+      orderType
     };
 
     try {
@@ -235,6 +237,22 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
                 <option value="low">Niedrig</option>
                 <option value="medium">Mittel</option>
                 <option value="high">Hoch</option>
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="orderType" className="block text-sm font-medium text-gray-700 mb-2">
+                Auftragstyp *
+              </label>
+              <select
+                id="orderType"
+                value={orderType}
+                onChange={e => setOrderType(e.target.value as 'fertigung' | 'service')}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                required
+              >
+                <option value="fertigung">Fertigungsauftrag</option>
+                <option value="service">Serviceauftrag</option>
               </select>
             </div>
           </div>

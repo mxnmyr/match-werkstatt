@@ -41,6 +41,7 @@ export interface Order {
     documents?: PDFDocument[];
     requestedAt: Date;
   };
+  orderType: 'fertigung' | 'service'; // Auftragstyp für Nummerngenerierung
 }
 
 export interface SubTask {

@@ -223,7 +223,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
         <div className="flex justify-between items-center p-6 border-b">
           <div>
             <h2 className="text-2xl font-bold text-gray-900">{currentOrder.title}</h2>
-            <p className="text-gray-600 mt-1">Auftrag #{currentOrder.id.slice(-8)}</p>
+            <p className="text-gray-600 mt-1">Auftrags-Nr.: {currentOrder.id}</p>
           </div>
           <div className="flex items-center gap-2">
             <button

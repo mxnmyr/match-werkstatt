@@ -86,10 +86,30 @@ app.get('/api/orders', (req, res) => {
 app.post('/api/orders', (req, res) => {
   console.log('POST /api/orders empfangen:', req.body);
   const orders = JSON.parse(fs.readFileSync(ordersPath));
+
+  // Auftragstyp und Tagesdatum bestimmen
+  let typePrefix = 'F';
+  if (req.body.orderType) {
+    const t = String(req.body.orderType).toLowerCase();
+    if (t.startsWith('s')) typePrefix = 'S';
+    if (t.startsWith('f')) typePrefix = 'F';
+  }
+  const now = new Date();
+  const dateStr = now.toISOString().slice(2, 10).replace(/-/g, '').slice(0, 6); // JJMMTT
+
+  // Laufende Nummer für diesen Tag und Typ bestimmen
+  const todaysOrders = orders.filter(o => {
+    if (!o.id) return false;
+    const parts = o.id.split('-');
+    return parts[0] === typePrefix && parts[1] === dateStr;
+  });
+  const laufendeNummer = todaysOrders.length + 1;
+  const newOrderId = `${typePrefix}-${dateStr}-${laufendeNummer}`;
+
   // Pflichtfelder und Standardwerte setzen
   const newOrder = {
     ...req.body,
-    id: req.body.id || String(Date.now()),
+    id: newOrderId,
     status: req.body.status || 'pending',
     createdAt: req.body.createdAt ? new Date(req.body.createdAt).toISOString() : new Date().toISOString(),
     updatedAt: new Date().toISOString(),
