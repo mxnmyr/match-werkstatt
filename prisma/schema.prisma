@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Order {
+  id            String   @id // Default entfernt, wird explizit gesetzt
+  title         String
+  description   String
+  clientId      String
+  clientName    String
+  deadline      DateTime
+  costCenter    String
+  priority      String
+  status        String
+  estimatedHours Int
+  actualHours   Int
+  assignedTo    String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  orderType     String
+  documents     Document[]
+  subTasks      Json
+  revisionHistory Json   @default("[]") // Verlauf aller Nacharbeits-Kommentare, Default: leeres Array
+}
+
+model Document {
+  id         String   @id @default(uuid())
+  name       String
+  url        String
+  uploadDate DateTime
+  order      Order    @relation(fields: [orderId], references: [id])
+  orderId    String
+}
+
+model User {
+  id          String   @id @default(uuid())
+  username    String   @unique
+  password    String
+  name        String
+  role        String   // 'client', 'admin', 'workshop'
+  isActive    Boolean  @default(true)
+  isApproved  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}

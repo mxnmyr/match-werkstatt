@@ -22,7 +22,6 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
     e.preventDefault();
 
     const newOrder: Order = {
-      id: `order_${Date.now()}`,
       title,
       description,
       clientId: state.currentUser!.id,

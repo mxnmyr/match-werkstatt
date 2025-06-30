@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, FileText, Calendar, DollarSign, Clock, Eye, Edit2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import CreateOrder from './CreateOrder';
@@ -8,12 +8,26 @@ import EndabnahmeActions from './EndabnahmeActions';
 import { Order } from '../types';
 
 export default function ClientDashboard() {
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
   const [showCreateOrder, setShowCreateOrder] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [orders, setOrders] = useState<Order[]>(state.orders);
 
-  const userOrders = state.orders.filter(order => 
+  // Orders nach jedem Öffnen/Schließen des Modals neu laden
+  const fetchOrders = async () => {
+    const res = await fetch('/api/orders');
+    const data = await res.json();
+    setOrders(data);
+    // Optional: globalen State aktualisieren
+    if (dispatch) dispatch({ type: 'SET_ORDERS', payload: data });
+  };
+
+  useEffect(() => {
+    setOrders(state.orders);
+  }, [state.orders]);
+
+  const userOrders = orders.filter(order => 
     order.clientId === state.currentUser?.id && order.status !== 'archived'
   );
 
@@ -47,7 +61,7 @@ export default function ClientDashboard() {
   };
 
   if (showCreateOrder) {
-    return <CreateOrder onClose={() => setShowCreateOrder(false)} />;
+    return <CreateOrder onClose={() => { setShowCreateOrder(false); fetchOrders(); }} />;
   }
 
   if (editingOrder) {

@@ -14,6 +14,13 @@ export interface PDFDocument {
   file?: File;
 }
 
+export interface RevisionComment {
+  comment: string;
+  userId: string;
+  userName: string;
+  createdAt: string; // ISO-String
+}
+
 export interface Order {
   id: string;
   title: string;
@@ -42,6 +49,7 @@ export interface Order {
     requestedAt: Date;
   };
   orderType: 'fertigung' | 'service'; // Auftragstyp für Nummerngenerierung
+  revisionHistory: RevisionComment[];
 }
 
 export interface SubTask {

@@ -407,6 +407,21 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                   )}
                 </div>
               )}
+
+              {/* Nacharbeits-Kommentare Verlauf */}
+              {currentOrder.revisionHistory && currentOrder.revisionHistory.length > 0 && (
+                <div className="mt-6">
+                  <h4 className="text-md font-semibold text-gray-900 mb-2">Nacharbeits-Kommentare</h4>
+                  <div className="space-y-2">
+                    {currentOrder.revisionHistory.map((entry, idx) => (
+                      <div key={idx} className="bg-orange-50 border-l-4 border-orange-400 p-3 rounded">
+                        <div className="text-sm text-gray-800 mb-1">{entry.comment}</div>
+                        <div className="text-xs text-gray-500">{entry.userName} am {new Date(entry.createdAt).toLocaleString('de-DE')}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

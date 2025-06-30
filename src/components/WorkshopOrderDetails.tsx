@@ -13,7 +13,7 @@ import {
   Upload
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { Order, SubTask, PDFDocument } from '../types';
+import { Order, SubTask, PDFDocument, RevisionComment } from '../types';
 
 interface WorkshopOrderDetailsProps {
   order: Order;
@@ -22,33 +22,40 @@ interface WorkshopOrderDetailsProps {
 
 export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDetailsProps) {
   const { state, dispatch } = useApp();
-  // Immer die aktuellste Order aus dem Context holen
-  const currentOrder = state.orders.find(o => o.id === order.id) || order;
+  const [localOrder, setLocalOrder] = useState(order);
 
-  const [estimatedHours, setEstimatedHours] = useState(currentOrder.estimatedHours.toString());
-  const [actualHours, setActualHours] = useState(currentOrder.actualHours.toString());
-  const [notes, setNotes] = useState(currentOrder.notes);
+  const [estimatedHours, setEstimatedHours] = useState(localOrder.estimatedHours.toString());
+  const [actualHours, setActualHours] = useState(localOrder.actualHours.toString());
+  const [notes, setNotes] = useState(localOrder.notes);
   const [showAddSubTask, setShowAddSubTask] = useState(false);
   const [subTaskTitle, setSubTaskTitle] = useState('');
   const [subTaskDescription, setSubTaskDescription] = useState('');
   const [subTaskHours, setSubTaskHours] = useState('');
   const [subTaskDocuments, setSubTaskDocuments] = useState<PDFDocument[]>([]);
-  const [assignedTo, setAssignedTo] = useState(currentOrder.assignedTo || '');
+  const [assignedTo, setAssignedTo] = useState(localOrder.assignedTo || '');
   const [subTaskAssignedTo, setSubTaskAssignedTo] = useState('');
   const [dragActive, setDragActive] = useState(false);
+  const [showRevisionDialog, setShowRevisionDialog] = useState(false);
+  const [revisionComment, setRevisionComment] = useState('');
+  const [revisionError, setRevisionError] = useState('');
 
   // Hilfsfunktion für API-Update
-  const updateOrder = async (updatedOrder: Order, notificationMsg?: string) => {
+  const updateOrder = async (updatedOrder: Order, notificationMsg?: string, extraBody?: any) => {
     try {
       const response = await fetch(`/api/orders/${updatedOrder.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedOrder)
+        body: JSON.stringify({ ...updatedOrder, ...extraBody })
       });
       if (!response.ok) {
         dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Fehler beim Speichern!', type: 'error' } });
         return;
       }
+      // Nach erfolgreichem Update: Auftrag neu laden
+      const fresh = await fetch(`/api/orders`);
+      const allOrders = await fresh.json();
+      const freshOrder = allOrders.find((o: Order) => o.id === updatedOrder.id);
+      if (freshOrder) setLocalOrder(freshOrder);
       if (notificationMsg) {
         dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: notificationMsg, type: 'success' } });
       }
@@ -58,23 +65,25 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   };
 
   const handleStatusChange = (newStatus: Order['status']) => {
+    if (newStatus === 'revision') {
+      setShowRevisionDialog(true);
+      return;
+    }
     const updatedOrder = {
-      ...currentOrder,
-      status: newStatus,
+      ...localOrder,
+      status: newStatus as Order['status'],
       assignedTo: assignedTo || null,
       estimatedHours: parseFloat(estimatedHours) || 0,
       actualHours: parseFloat(actualHours) || 0,
       notes,
-      canEdit: newStatus === 'revision',
+      canEdit: newStatus === 'revision' ? true : undefined,
       updatedAt: new Date()
     };
     let message = '';
     switch (newStatus) {
       case 'accepted': message = 'Auftrag wurde erfolgreich angenommen'; break;
-      case 'revision': message = 'Auftrag wurde zur Überarbeitung zurückgeschickt'; break;
       case 'in_progress': message = 'Auftrag wurde gestartet'; break;
       case 'completed':
-        // Statt direkt abschließen: Endabnahme durch Kunden erforderlich
         updatedOrder.status = 'waiting_confirmation';
         message = 'Auftrag wartet auf Endabnahme durch den Kunden';
         break;
@@ -83,10 +92,40 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     updateOrder(updatedOrder, message);
   };
 
+  // Revision absenden
+  const submitRevision = () => {
+    if (!revisionComment.trim()) {
+      setRevisionError('Kommentar ist erforderlich!');
+      return;
+    }
+    setRevisionError('');
+    setShowRevisionDialog(false);
+    const updatedOrder = {
+      ...localOrder,
+      status: 'revision' as Order['status'],
+      assignedTo: assignedTo || null,
+      estimatedHours: parseFloat(estimatedHours) || 0,
+      actualHours: parseFloat(actualHours) || 0,
+      notes,
+      canEdit: true,
+      updatedAt: new Date()
+    };
+    updateOrder(
+      updatedOrder,
+      'Auftrag wurde zur Überarbeitung zurückgeschickt',
+      {
+        revisionComment,
+        userId: state.currentUser?.id,
+        userName: state.currentUser?.name
+      }
+    );
+    setRevisionComment('');
+  };
+
   const handleArchive = async () => {
     const updatedOrder = {
-      ...currentOrder,
-      status: 'archived',
+      ...localOrder,
+      status: 'archived' as Order['status'],
       updatedAt: new Date()
     };
     try {
@@ -100,6 +139,10 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
         return;
       }
       dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Auftrag wurde archiviert', type: 'info' } });
+      // Nach dem Archivieren: Aufträge neu laden
+      const fresh = await fetch('/api/orders');
+      const allOrders = await fresh.json();
+      if (dispatch) dispatch({ type: 'LOAD_ORDERS', payload: allOrders });
       onClose();
     } catch (err) {
       dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Netzwerkfehler beim Archivieren!', type: 'error' } });
@@ -154,7 +197,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     if (!subTaskTitle.trim()) return;
     const newSubTask: SubTask = {
       id: `subtask_${Date.now()}_${Math.random()}`,
-      orderId: currentOrder.id,
+      orderId: localOrder.id,
       title: subTaskTitle,
       description: subTaskDescription,
       estimatedHours: parseFloat(subTaskHours) || 0,
@@ -167,8 +210,8 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
       updatedAt: new Date()
     };
     const updatedOrder = {
-      ...currentOrder,
-      subTasks: [...currentOrder.subTasks, newSubTask],
+      ...localOrder,
+      subTasks: [...localOrder.subTasks, newSubTask],
       updatedAt: new Date()
     };
     await updateOrder(updatedOrder, 'Unteraufgabe wurde erfolgreich hinzugefügt');
@@ -187,8 +230,8 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
       updatedAt: new Date()
     };
     const updatedOrder = {
-      ...currentOrder,
-      subTasks: currentOrder.subTasks.map(st => st.id === subTask.id ? updatedSubTask : st),
+      ...localOrder,
+      subTasks: localOrder.subTasks.map(st => st.id === subTask.id ? updatedSubTask : st),
       updatedAt: new Date()
     };
     await updateOrder(updatedOrder, 'Unteraufgabe aktualisiert');
@@ -197,8 +240,8 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   const handleDeleteSubTask = async (subTaskId: string) => {
     if (confirm('Sind Sie sicher, dass Sie diese Unteraufgabe löschen möchten?')) {
       const updatedOrder = {
-        ...currentOrder,
-        subTasks: currentOrder.subTasks.filter(st => st.id !== subTaskId),
+        ...localOrder,
+        subTasks: localOrder.subTasks.filter(st => st.id !== subTaskId),
         updatedAt: new Date()
       };
       await updateOrder(updatedOrder, 'Unteraufgabe gelöscht');
@@ -248,7 +291,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   };
 
   const canModify = state.currentUser?.role === 'admin' || 
-                   (state.currentUser?.role === 'workshop' && currentOrder.assignedTo === state.currentUser?.id);
+                   (state.currentUser?.role === 'workshop' && localOrder.assignedTo === state.currentUser?.id);
 
   // Auftrag löschen (nur für Admin)
   const handleDeleteOrder = async () => {
@@ -258,7 +301,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     }
     if (!window.confirm('Diesen Auftrag wirklich unwiderruflich löschen?')) return;
     try {
-      const response = await fetch(`/api/orders/${currentOrder.id}`, {
+      const response = await fetch(`/api/orders/${localOrder.id}`, {
         method: 'DELETE',
       });
       if (!response.ok) {
@@ -276,8 +319,8 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
       <div className="bg-white rounded-lg shadow-sm border">
         <div className="flex justify-between items-center p-6 border-b">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">{currentOrder.title}</h2>
-            <p className="text-gray-600 mt-1">Auftrags-Nr.: {currentOrder.id}</p>
+            <h2 className="text-2xl font-bold text-gray-900">{localOrder.title}</h2>
+            <p className="text-gray-600 mt-1">Auftrags-Nr.: {localOrder.id}</p>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -298,41 +341,41 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                 <div className="bg-gray-50 rounded-lg p-4 space-y-3">
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Status:</span>
-                    <span className={`px-2 py-1 text-xs rounded-full ${getStatusColor(currentOrder.status)}`}>
-                      {getStatusText(currentOrder.status)}
+                    <span className={`px-2 py-1 text-xs rounded-full ${getStatusColor(localOrder.status)}`}>
+                      {getStatusText(localOrder.status)}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Auftraggeber:</span>
-                    <span className="text-sm font-medium text-gray-900">{currentOrder.clientName}</span>
+                    <span className="text-sm font-medium text-gray-900">{localOrder.clientName}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Deadline:</span>
                     <span className="text-sm font-medium text-gray-900">
-                      {new Date(currentOrder.deadline).toLocaleDateString('de-DE')}
+                      {new Date(localOrder.deadline).toLocaleDateString('de-DE')}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Kostenstelle:</span>
-                    <span className="text-sm font-medium text-gray-900">{currentOrder.costCenter}</span>
+                    <span className="text-sm font-medium text-gray-900">{localOrder.costCenter}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Priorität:</span>
-                    <span className="text-sm font-medium text-gray-900">{currentOrder.priority}</span>
+                    <span className="text-sm font-medium text-gray-900">{localOrder.priority}</span>
                   </div>
                 </div>
               </div>
 
               <div>
                 <h4 className="text-md font-semibold text-gray-900 mb-2">Beschreibung</h4>
-                <p className="text-gray-700 bg-gray-50 rounded-lg p-4">{currentOrder.description}</p>
+                <p className="text-gray-700 bg-gray-50 rounded-lg p-4">{localOrder.description}</p>
               </div>
 
               <div>
                 <h4 className="text-md font-semibold text-gray-900 mb-2">Dokumente</h4>
-                {currentOrder.documents.length > 0 ? (
+                {localOrder.documents.length > 0 ? (
                   <div className="space-y-2">
-                    {currentOrder.documents.map((doc) => (
+                    {localOrder.documents.map((doc) => (
                       <div key={doc.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                         <div className="flex items-center">
                           <FileText className="w-5 h-5 text-red-600 mr-3" />
@@ -430,7 +473,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                 <div className="border-t pt-6">
                   <h4 className="text-md font-semibold text-gray-900 mb-4">Aktionen</h4>
                   <div className="grid grid-cols-2 gap-3">
-                    {currentOrder.status === 'pending' && (
+                    {localOrder.status === 'pending' && (
                       <>
                         <button
                           onClick={() => handleStatusChange('accepted')}
@@ -449,7 +492,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                       </>
                     )}
                     
-                    {currentOrder.status === 'accepted' || currentOrder.status === 'rework' ? (
+                    {localOrder.status === 'accepted' || localOrder.status === 'rework' ? (
                       <button
                         onClick={() => handleStatusChange('in_progress')}
                         className="flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -459,7 +502,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                       </button>
                     ) : null}
                     
-                    {currentOrder.status === 'in_progress' && (
+                    {localOrder.status === 'in_progress' && (
                       <button
                         onClick={() => handleStatusChange('completed')}
                         className="flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
@@ -469,7 +512,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                       </button>
                     )}
                     
-                    {currentOrder.status === 'completed' && state.currentUser?.role === 'admin' && currentOrder.confirmationDate && (
+                    {localOrder.status === 'completed' && state.currentUser?.role === 'admin' && (
                       <button
                         onClick={handleArchive}
                         className="flex items-center justify-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
@@ -614,9 +657,9 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
               </div>
             )}
 
-            {currentOrder.subTasks.length > 0 ? (
+            {localOrder.subTasks.length > 0 ? (
               <div className="space-y-3">
-                {currentOrder.subTasks.map((subTask) => (
+                {localOrder.subTasks.map((subTask) => (
                   <div key={subTask.id} className="bg-gray-50 rounded-lg p-4">
                     <div className="flex justify-between items-start mb-2">
                       <div className="flex-1">
@@ -741,6 +784,49 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
           </div>
         )}
       </div>
+
+      {/* Revision-Kommentar Dialog */}
+      {showRevisionDialog && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold mb-2">Kommentar zur Nacharbeit</h3>
+            <textarea
+              className="w-full border border-gray-300 rounded-lg p-2 mb-2"
+              rows={4}
+              value={revisionComment}
+              onChange={e => setRevisionComment(e.target.value)}
+              placeholder="Bitte geben Sie einen Kommentar zur Nacharbeit ein..."
+              autoFocus
+            />
+            {revisionError && <div className="text-red-600 text-sm mb-2">{revisionError}</div>}
+            <div className="flex justify-end space-x-2">
+              <button
+                className="px-4 py-2 border rounded-lg text-gray-700"
+                onClick={() => { setShowRevisionDialog(false); setRevisionError(''); }}
+              >Abbrechen</button>
+              <button
+                className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700"
+                onClick={submitRevision}
+              >Absenden</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Nacharbeits-Kommentare Verlauf */}
+      {localOrder.revisionHistory && localOrder.revisionHistory.length > 0 && (
+        <div className="mt-6">
+          <h4 className="text-md font-semibold text-gray-900 mb-2">Nacharbeits-Kommentare</h4>
+          <div className="space-y-2">
+            {localOrder.revisionHistory.map((entry: RevisionComment, idx: number) => (
+              <div key={idx} className="bg-orange-50 border-l-4 border-orange-400 p-3 rounded">
+                <div className="text-sm text-gray-800 mb-1">{entry.comment}</div>
+                <div className="text-xs text-gray-500">{entry.userName} am {new Date(entry.createdAt).toLocaleString('de-DE')}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

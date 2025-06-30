@@ -27,9 +27,8 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
     email: ''
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
     if (editingAccount) {
       const updatedAccount: WorkshopAccount = {
         ...editingAccount,
@@ -39,16 +38,29 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
       dispatch({ type: 'UPDATE_WORKSHOP_ACCOUNT', payload: updatedAccount });
       setEditingAccount(null);
     } else {
-      const newAccount: WorkshopAccount = {
-        id: `workshop_${Date.now()}`,
-        ...formData,
-        isActive: true,
-        createdBy: state.currentUser?.id,
-        createdAt: new Date()
-      };
-      dispatch({ type: 'ADD_WORKSHOP_ACCOUNT', payload: newAccount });
+      // Backend-Call für neuen User
+      try {
+        const response = await fetch('/api/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: formData.username,
+            password: formData.password,
+            name: formData.name,
+            role: formData.role
+          })
+        });
+        if (!response.ok) {
+          alert('Fehler beim Anlegen des Accounts!');
+          return;
+        }
+        const newUser = await response.json();
+        dispatch({ type: 'ADD_WORKSHOP_ACCOUNT', payload: newUser });
+      } catch (err) {
+        alert('Netzwerkfehler beim Anlegen des Accounts!');
+        return;
+      }
     }
-    
     setFormData({ username: '', password: '', name: '', role: 'workshop' });
     setShowAddForm(false);
   };
@@ -64,13 +76,13 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
     setShowAddForm(true);
   };
 
-  const handleDelete = (accountId: string) => {
+  const handleDelete = async (accountId: string) => {
     if (accountId === state.currentUser?.id) {
       alert('Sie können Ihren eigenen Account nicht löschen');
       return;
     }
-    
     if (confirm('Sind Sie sicher, dass Sie diesen Account löschen möchten?')) {
+      await fetch(`/api/users/${accountId}`, { method: 'DELETE' });
       dispatch({ type: 'DELETE_WORKSHOP_ACCOUNT', payload: accountId });
     }
   };

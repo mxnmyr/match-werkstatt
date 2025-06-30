@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Calendar, Clock, User, Eye, Filter, Search, Settings, ChevronRight } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import WorkshopOrderDetails from './WorkshopOrderDetails';
@@ -8,7 +8,7 @@ import CreateOrder from './CreateOrder';
 import { Order } from '../types';
 
 export default function WorkshopDashboard() {
-  const { state } = useApp();
+  const { state, dispatch } = useApp();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -16,22 +16,32 @@ export default function WorkshopDashboard() {
   const [viewMode, setViewMode] = useState<'all' | 'assigned'>('all');
   const [showArchive, setShowArchive] = useState(false);
   const [showCreateOrder, setShowCreateOrder] = useState(false);
+  const [orders, setOrders] = useState<Order[]>(state.orders);
+
+  // Orders nach jedem Öffnen/Schließen des Modals neu laden
+  const fetchOrders = async () => {
+    const res = await fetch('/api/orders');
+    const data = await res.json();
+    setOrders(data);
+    if (dispatch) dispatch({ type: 'LOAD_ORDERS', payload: data });
+  };
+
+  useEffect(() => {
+    setOrders(state.orders);
+  }, [state.orders]);
 
   // Filter orders based on user role and view mode
   const getFilteredOrders = () => {
-    let orders = state.orders.filter(order =>
+    let filtered = orders.filter(order =>
       typeof order.status === 'string' && order.status.trim().toLowerCase() !== 'archived'
     );
-    
     if (viewMode === 'assigned' && state.currentUser?.role === 'workshop') {
-      // Show orders assigned to current user or their subtasks
-      orders = orders.filter(order => 
+      filtered = filtered.filter(order =>
         order.assignedTo === state.currentUser?.id ||
         order.subTasks.some(subTask => subTask.assignedTo === state.currentUser?.id)
       );
     }
-    
-    return orders;
+    return filtered;
   };
 
   const activeOrders = getFilteredOrders();
@@ -204,13 +214,13 @@ export default function WorkshopDashboard() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
           <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto relative">
             <button
-              onClick={() => setShowCreateOrder(false)}
+              onClick={() => { setShowCreateOrder(false); fetchOrders(); }}
               className="absolute top-2 right-2 text-gray-400 hover:text-gray-600 text-xl"
               aria-label="Schließen"
             >
               ×
             </button>
-            <CreateOrder onClose={() => setShowCreateOrder(false)} />
+            <CreateOrder onClose={() => { setShowCreateOrder(false); fetchOrders(); }} />
           </div>
         </div>
       )}
