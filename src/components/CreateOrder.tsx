@@ -21,7 +21,7 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const newOrder: Order = {
+    const newOrder = {
       title,
       description,
       clientId: state.currentUser!.id,
@@ -38,7 +38,10 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
       createdAt: new Date(),
       updatedAt: new Date(),
       subTasks: [],
-      orderType
+      orderType,
+      // Initialisiere die neuen Felder als leere Arrays
+      revisionHistory: [],
+      reworkComments: []
     };
 
     try {
@@ -48,11 +51,14 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
         body: JSON.stringify(newOrder)
       });
       if (!response.ok) {
-        alert('Fehler beim Anlegen des Auftrags!');
+        const errorData = await response.json();
+        console.error('Backend error:', errorData);
+        alert(`Fehler beim Anlegen des Auftrags: ${errorData.error || 'Unbekannter Fehler'}`);
         return;
       }
       onClose();
     } catch (err) {
+      console.error('Network error:', err);
       alert('Netzwerkfehler beim Anlegen des Auftrags!');
     }
   };

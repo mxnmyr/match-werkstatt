@@ -15,8 +15,8 @@ model Order {
   clientName    String
   deadline      DateTime
   costCenter    String
-  priority      String
-  status        String
+  priority      String        @default("medium")
+  status        String        @default("pending")
   estimatedHours Int
   actualHours   Int
   assignedTo    String?
@@ -24,9 +24,14 @@ model Order {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   orderType     String
+  subTasks      Json?
   documents     Document[]
-  subTasks      Json
-  revisionHistory Json   @default("[]") // Verlauf aller Nacharbeits-Kommentare, Default: leeres Array
+  revisionHistory  Json? // Kommentare von der Werkstatt an den Kunden
+  reworkComments   Json? // Kommentare vom Kunden an die Werkstatt
+  confirmationNote String?       @db.Text
+  confirmationDate DateTime?
+  canEdit          Boolean?      @default(false)
+  noteHistory      NoteHistory[] // Relation zu NoteHistory
 }
 
 model Document {
@@ -47,4 +52,12 @@ model User {
   isActive    Boolean  @default(true)
   isApproved  Boolean  @default(false)
   createdAt   DateTime @default(now())
+}
+
+model NoteHistory {
+  id        Int      @id @default(autoincrement())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  notes     String
+  createdAt DateTime @default(now())
 }

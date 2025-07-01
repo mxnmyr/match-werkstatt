@@ -19,12 +19,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
   const [showRevisionModal, setShowRevisionModal] = useState(false);
   const [confirmationNote, setConfirmationNote] = useState('');
   const [revisionDescription, setRevisionDescription] = useState('');
-  const [revisionDeadline, setRevisionDeadline] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // --- State für Nacharbeits-Upload ---
-  const [revisionFiles, setRevisionFiles] = useState<File[]>([]);
-  const [revisionFileError, setRevisionFileError] = useState('');
 
   useEffect(() => {
     // WebSocket verbinden und auf Events hören
@@ -44,13 +39,25 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
     console.log('OrderDetails: currentOrder', currentOrder);
   }, [state.currentUser, currentOrder.status]);
 
+  // Zeige eine Warnung, wenn kein User im State ist
+  useEffect(() => {
+    if (!state.currentUser) {
+      alert('FEHLER: Kein Benutzer im System angemeldet! Bitte neu einloggen.');
+      console.error('OrderDetails: currentUser fehlt!', state.currentUser);
+    } else {
+      console.log('OrderDetails: currentUser vorhanden', state.currentUser);
+    }
+  }, []);
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending': return 'bg-yellow-100 text-yellow-800';
       case 'accepted': return 'bg-blue-100 text-blue-800';
       case 'in_progress': return 'bg-purple-100 text-purple-800';
       case 'revision': return 'bg-orange-100 text-orange-800';
+      case 'rework': return 'bg-orange-100 text-orange-800';
       case 'completed': return 'bg-green-100 text-green-800';
+      case 'waiting_confirmation': return 'bg-cyan-100 text-cyan-800';
       default: return 'bg-gray-100 text-gray-800';
     }
   };
@@ -61,7 +68,9 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
       case 'accepted': return 'Angenommen';
       case 'in_progress': return 'In Bearbeitung';
       case 'revision': return 'Überarbeitung';
+      case 'rework': return 'In Nacharbeit';
       case 'completed': return 'Abgeschlossen';
+      case 'waiting_confirmation': return 'Wartet auf Abnahme';
       default: return status;
     }
   };
@@ -148,46 +157,47 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
 
   // Nacharbeit anfordern
   const handleRequestRevision = async () => {
+    console.log('=== FRONTEND: handleRequestRevision called ===');
+    console.log('revisionDescription:', revisionDescription);
+    console.log('currentUser:', state.currentUser);
+    console.log('currentOrder:', currentOrder);
+    
+    if (!revisionDescription.trim()) {
+      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Bitte geben Sie eine Beschreibung für die Nacharbeit ein!', type: 'error' } });
+      return;
+    }
+
+    if (!state.currentUser?.id || !state.currentUser?.name) {
+      alert('FEHLER: Kein Benutzer im System angemeldet! Bitte neu einloggen.');
+      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Fehler: Benutzerinformationen nicht verfügbar!', type: 'error' } });
+      console.error('currentUser missing:', state.currentUser);
+      return;
+    }
+    
     setIsSubmitting(true);
     try {
-      // Dateien hochladen (falls vorhanden)
-      let uploadedDocs = [];
-      if (revisionFiles.length > 0) {
-        uploadedDocs = await Promise.all(revisionFiles.map(async (file) => {
-          const formData = new FormData();
-          formData.append('file', file);
-          const res = await fetch('/api/upload', { method: 'POST', body: formData });
-          const data = await res.json();
-          return {
-            id: `doc_${Date.now()}_${Math.random()}`,
-            name: data.originalname,
-            url: `/uploads/${data.filename}`,
-            uploadDate: new Date(),
-          };
-        }));
-      }
-      const updatedOrder = {
-        ...currentOrder,
-        status: 'revision',
-        revisionRequest: {
-          description: revisionDescription,
-          newDeadline: revisionDeadline ? new Date(revisionDeadline) : undefined,
-          documents: uploadedDocs,
-          requestedAt: new Date(),
-        },
+      // Saubere Datenstruktur für Kundenkommentare - keine Arrays überschreiben!
+      const requestBody = {
+        status: 'rework',
+        revisionComment: revisionDescription, // Der Kommentartext
+        userId: state.currentUser.id,
+        userName: state.currentUser.name,
         updatedAt: new Date(),
       };
-      console.log('PUT /api/orders/:id (Nacharbeit):', updatedOrder);
+      
+      console.log('=== FRONTEND: Request Body vor dem Senden ===');
+      console.log('Full requestBody:', JSON.stringify(requestBody, null, 2));
+      console.log('===============================================');
+      
+      console.log('PUT /api/orders/:id (Nacharbeit):', requestBody);
       const response = await fetch(`/api/orders/${currentOrder.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedOrder),
+        body: JSON.stringify(requestBody),
       });
       if (!response.ok) throw new Error('Fehler bei Nacharbeitsanfrage');
       setShowRevisionModal(false);
       setRevisionDescription('');
-      setRevisionDeadline('');
-      setRevisionFiles([]);
       dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Nacharbeit angefordert!', type: 'success' } });
     } catch (err) {
       dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Fehler bei der Nacharbeitsanfrage!', type: 'error' } });
@@ -195,27 +205,6 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
       setIsSubmitting(false);
     }
   };
-
-  // Nacharbeitsdokumente hinzufügen
-  const handleRevisionFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setRevisionFileError('');
-    if (!e.target.files) return;
-    const files = Array.from(e.target.files);
-    const pdfs = files.filter(f => f.type === 'application/pdf');
-    if (pdfs.length !== files.length) {
-      setRevisionFileError('Nur PDF-Dateien erlaubt!');
-      return;
-    }
-    setRevisionFiles(prev => [...prev, ...pdfs]);
-  };
-
-  const handleRemoveRevisionFile = (idx: number) => {
-    setRevisionFiles(prev => prev.filter((_, i) => i !== idx));
-  };
-
-  // Hilfsfunktion: Wer hat Nacharbeit gefordert?
-  const isRevisionByClient = currentOrder.status === 'revision' && !!currentOrder.revisionRequest && currentOrder.revisionRequest?.description && state.currentUser?.role === 'client';
-  const isRevisionByWorkshop = currentOrder.status === 'revision' && !!currentOrder.revisionRequest && currentOrder.revisionRequest?.description && state.currentUser?.role === 'workshop';
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -275,9 +264,61 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                 <p className="text-gray-700 bg-gray-50 rounded-lg p-4">{currentOrder.description}</p>
               </div>
 
+              {/* Revision History */}
+              {currentOrder.revisionHistory && Array.isArray(currentOrder.revisionHistory) && currentOrder.revisionHistory.length > 0 && (
+                <div>
+                  <h4 className="text-md font-semibold text-gray-900 mb-2">Nacharbeits-Kommentare</h4>
+                  <div className="space-y-3 bg-orange-50 rounded-lg p-4 border border-orange-200">
+                    {currentOrder.revisionHistory.map((entry: any, index: number) => (
+                      <div key={index} className="p-3 bg-white rounded-md shadow-sm">
+                        <p className="text-sm text-gray-800 whitespace-pre-wrap">{entry.comment}</p>
+                        <p className="text-xs text-gray-500 mt-2">
+                          <strong>{entry.userName}</strong> am {new Date(entry.createdAt).toLocaleString('de-DE')}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Revision History (Werkstatt-Kommentare) */}
+              {currentOrder.revisionHistory && Array.isArray(currentOrder.revisionHistory) && currentOrder.revisionHistory.length > 0 && (
+                <div>
+                  <h4 className="text-md font-semibold text-gray-900 mb-2">Werkstatt-Kommentare</h4>
+                  <div className="space-y-3 bg-orange-50 rounded-lg p-4 border border-orange-200">
+                    {currentOrder.revisionHistory.map((entry: any, index: number) => (
+                      <div key={index} className="p-3 bg-white rounded-md shadow-sm">
+                        <p className="text-sm text-gray-800 whitespace-pre-wrap">{entry.comment}</p>
+                        <p className="text-xs text-gray-500 mt-2">
+                          <strong>{entry.userName}</strong> am {new Date(entry.createdAt).toLocaleString('de-DE')}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Rework Comments (Kunden-Kommentare) */}
+              {currentOrder.reworkComments && Array.isArray(currentOrder.reworkComments) && currentOrder.reworkComments.length > 0 && (
+                <div>
+                  <h4 className="text-md font-semibold text-gray-900 mb-2">Kunden-Kommentare zur Nacharbeit</h4>
+                  <div className="space-y-3 bg-blue-50 rounded-lg p-4 border border-blue-200">
+                    {currentOrder.reworkComments.map((entry: any, index: number) => (
+                      <div key={index} className="p-3 bg-white rounded-md shadow-sm">
+                        <p className="text-sm text-gray-800 whitespace-pre-wrap">{entry.comment}</p>
+                        <p className="text-xs text-gray-500 mt-2">
+                          <strong>{entry.userName}</strong> am {new Date(entry.createdAt).toLocaleString('de-DE')}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+
               <div>
                 <h4 className="text-md font-semibold text-gray-900 mb-2">Dokumente</h4>
-                {currentOrder.documents.length > 0 ? (
+                {currentOrder.documents && currentOrder.documents.length > 0 ? (
                   <div className="space-y-2">
                     {currentOrder.documents.map((doc) => (
                       <div key={doc.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
@@ -426,178 +467,98 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
           </div>
         </div>
 
-        {/* Buttons für Endabnahme und Nacharbeit (nur für Kunden, wenn Status waiting_confirmation) */}
-        {state.currentUser?.role === 'client' && currentOrder.status === 'waiting_confirmation' && (
-          <div className="flex flex-col gap-2 mt-4">
-            <div className="text-xs text-gray-500">DEBUG: Buttons sichtbar für User {state.currentUser?.username}, Status: {currentOrder.status}</div>
-            <button
-              className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
-              onClick={() => setShowConfirmModal(true)}
-            >
-              Endabnahme bestätigen
-            </button>
-            <button
-              className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700"
-              onClick={() => setShowRevisionModal(true)}
-            >
-              Nacharbeit anfordern
-            </button>
-          </div>
-        )}
-
-        {/* Nacharbeitsmaske für den Kunden (Status revision, Nacharbeit wurde vom Kunden gefordert) */}
-        {state.currentUser?.role === 'client' && currentOrder.status === 'revision' && currentOrder.revisionRequest && (
-          <div className="bg-orange-50 border-l-4 border-orange-400 p-4 my-4 rounded">
-            <h4 className="font-semibold text-orange-700 mb-2">Nacharbeit angefordert</h4>
-            <div className="mb-2">
-              <span className="font-medium">Beschreibung:</span> {currentOrder.revisionRequest.description}
-            </div>
-            {currentOrder.revisionRequest.newDeadline && (
-              <div className="mb-2">
-                <span className="font-medium">Neue Deadline:</span> {new Date(currentOrder.revisionRequest.newDeadline).toLocaleDateString('de-DE')}
-              </div>
-            )}
-            {currentOrder.revisionRequest.documents && currentOrder.revisionRequest.documents.length > 0 && (
-              <div className="mb-2">
-                <span className="font-medium">Dokumente:</span>
-                <ul className="list-disc ml-6">
-                  {currentOrder.revisionRequest.documents.map((doc) => (
-                    <li key={doc.id} className="flex items-center gap-2">
-                      <span>{doc.name}</span>
-                      <button onClick={() => handleDownload(doc)} className="text-blue-600 hover:text-blue-800 text-xs">Download</button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            <div className="text-xs text-gray-500">Status: Nacharbeit wurde an die Werkstatt übermittelt. Bitte warten Sie auf Rückmeldung.</div>
-          </div>
-        )}
-
-        {/* Nacharbeitsmaske für die Werkstatt (Status revision, Nacharbeit wurde vom Kunden gefordert) */}
-        {state.currentUser?.role === 'workshop' && currentOrder.status === 'revision' && currentOrder.revisionRequest && (
-          <div className="bg-orange-50 border-l-4 border-orange-400 p-4 my-4 rounded">
-            <h4 className="font-semibold text-orange-700 mb-2">Nacharbeit vom Kunden angefordert</h4>
-            <div className="mb-2">
-              <span className="font-medium">Beschreibung:</span> {currentOrder.revisionRequest.description}
-            </div>
-            {currentOrder.revisionRequest.newDeadline && (
-              <div className="mb-2">
-                <span className="font-medium">Neue Deadline:</span> {new Date(currentOrder.revisionRequest.newDeadline).toLocaleDateString('de-DE')}
-              </div>
-            )}
-            {currentOrder.revisionRequest.documents && currentOrder.revisionRequest.documents.length > 0 && (
-              <div className="mb-2">
-                <span className="font-medium">Dokumente:</span>
-                <ul className="list-disc ml-6">
-                  {currentOrder.revisionRequest.documents.map((doc) => (
-                    <li key={doc.id} className="flex items-center gap-2">
-                      <span>{doc.name}</span>
-                      <button onClick={() => handleDownload(doc)} className="text-blue-600 hover:text-blue-800 text-xs">Download</button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            <div className="text-xs text-gray-500">Status: Nacharbeit durch Werkstatt erforderlich.</div>
-          </div>
-        )}
-
-        {/* Modal für Endabnahme */}
-        {showConfirmModal && (
-          <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
-            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
-              <h3 className="text-lg font-semibold mb-2">Endabnahme bestätigen</h3>
-              <textarea
-                className="w-full border rounded p-2 mb-4"
-                rows={3}
-                placeholder="Kommentar zur Endabnahme (optional)"
-                value={confirmationNote}
-                onChange={e => setConfirmationNote(e.target.value)}
-              />
-              <div className="flex justify-end gap-2">
-                <button
-                  className="px-4 py-2 bg-gray-200 rounded"
-                  onClick={() => setShowConfirmModal(false)}
-                  disabled={isSubmitting}
-                >Abbrechen</button>
-                <button
-                  className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
-                  onClick={handleConfirmOrder}
-                  disabled={isSubmitting}
-                >Bestätigen</button>
-              </div>
+        {/* Aktionen für Endabnahme */}
+        {currentOrder.status === 'waiting_confirmation' && state.currentUser?.role === 'client' && (
+          <div className="p-6 bg-gray-50 border-t">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Endabnahme</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Bitte überprüfen Sie den Auftrag. Sie können die Fertigstellung bestätigen oder eine Nacharbeit mit Anmerkungen anfordern.
+            </p>
+            <div className="flex gap-4">
+              <button
+                onClick={() => setShowConfirmModal(true)}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
+              >
+                Auftrag bestätigen
+              </button>
+              <button
+                onClick={() => setShowRevisionModal(true)}
+                className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors"
+              >
+                Nacharbeit anfordern
+              </button>
             </div>
           </div>
         )}
 
-        {/* Modal für Nacharbeitsanfrage */}
-        {showRevisionModal && (
-          <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
-            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-lg">
-              <h3 className="text-lg font-semibold mb-2">Nacharbeit anfordern</h3>
-              <textarea
-                className="w-full border rounded p-2 mb-4"
-                rows={3}
-                placeholder="Beschreibung der Nacharbeit"
-                value={revisionDescription}
-                onChange={e => setRevisionDescription(e.target.value)}
-              />
-              <label className="block mb-2 text-sm">Neue Deadline (optional):</label>
-              <input
-                type="date"
-                className="w-full border rounded p-2 mb-4"
-                value={revisionDeadline}
-                onChange={e => setRevisionDeadline(e.target.value)}
-              />
-              <label className="block mb-2 text-sm">Dokumente (PDF, optional):</label>
-              <input
-                type="file"
-                accept="application/pdf"
-                multiple
-                onChange={handleRevisionFileChange}
-                className="mb-2"
-              />
-              {revisionFileError && <div className="text-red-600 text-xs mb-2">{revisionFileError}</div>}
-              {revisionFiles.length > 0 && (
-                <ul className="mb-2">
-                  {revisionFiles.map((file, idx) => (
-                    <li key={idx} className="flex items-center justify-between text-sm bg-gray-100 rounded p-2 mb-1">
-                      <span>{file.name}</span>
-                      <button className="text-red-600 ml-2" onClick={() => handleRemoveRevisionFile(idx)}>Entfernen</button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="flex justify-end gap-2 mt-4">
-                <button
-                  className="px-4 py-2 bg-gray-200 rounded"
-                  onClick={() => setShowRevisionModal(false)}
-                  disabled={isSubmitting}
-                >Abbrechen</button>
-                <button
-                  className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700"
-                  onClick={handleRequestRevision}
-                  disabled={isSubmitting || !revisionDescription.trim()}
-                >Nacharbeit anfordern</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Admin-Löschen-Button mittig unten */}
+        {/* Admin-Aktionen */}
         {state.currentUser?.role === 'admin' && (
-          <div className="flex justify-center mt-8">
+          <div className="p-6 bg-gray-50 border-t">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Admin-Aktionen</h3>
             <button
               onClick={handleDelete}
-              className="px-6 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-base font-semibold shadow"
-              title="Auftrag löschen"
+              className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
             >
               Auftrag löschen
             </button>
           </div>
         )}
       </div>
+
+      {/* Modal für Bestätigung */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-8 rounded-lg shadow-xl max-w-md w-full">
+            <h3 className="text-xl font-bold mb-4">Endabnahme bestätigen</h3>
+            <p className="mb-4 text-gray-700">Möchten Sie die Fertigstellung dieses Auftrags wirklich bestätigen?</p>
+            <textarea
+              value={confirmationNote}
+              onChange={(e) => setConfirmationNote(e.target.value)}
+              placeholder="Optionale Anmerkung zur Abnahme..."
+              className="w-full p-2 border rounded-lg mb-4"
+              rows={3}
+            />
+            <div className="flex justify-end gap-4">
+              <button onClick={() => setShowConfirmModal(false)} className="text-gray-600">Abbrechen</button>
+              <button
+                onClick={handleConfirmOrder}
+                disabled={isSubmitting}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:bg-gray-400"
+              >
+                {isSubmitting ? 'Wird bestätigt...' : 'Bestätigen'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal für Nacharbeit */}
+      {showRevisionModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-8 rounded-lg shadow-xl max-w-lg w-full">
+            <h3 className="text-xl font-bold mb-4">Nacharbeit anfordern</h3>
+            <p className="mb-4 text-gray-700">Bitte beschreiben Sie die gewünschten Änderungen. Diese werden an die Werkstatt übermittelt.</p>
+            <textarea
+              value={revisionDescription}
+              onChange={(e) => setRevisionDescription(e.target.value)}
+              placeholder="Beschreiben Sie hier detailliert die notwendige Nacharbeit..."
+              className="w-full p-2 border rounded-lg mb-4"
+              rows={5}
+              required
+            />
+            <div className="flex justify-end gap-4">
+              <button onClick={() => setShowRevisionModal(false)} className="text-gray-600">Abbrechen</button>
+              <button
+                onClick={handleRequestRevision}
+                disabled={isSubmitting || !revisionDescription.trim()}
+                className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 disabled:bg-gray-400"
+              >
+                {isSubmitting ? 'Wird gesendet...' : 'Nacharbeit anfordern'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

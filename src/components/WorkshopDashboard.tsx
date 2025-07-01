@@ -38,7 +38,7 @@ export default function WorkshopDashboard() {
     if (viewMode === 'assigned' && state.currentUser?.role === 'workshop') {
       filtered = filtered.filter(order =>
         order.assignedTo === state.currentUser?.id ||
-        order.subTasks.some(subTask => subTask.assignedTo === state.currentUser?.id)
+        (Array.isArray(order.subTasks) && order.subTasks.some(subTask => subTask.assignedTo === state.currentUser?.id))
       );
     }
     return filtered;
@@ -67,11 +67,13 @@ export default function WorkshopDashboard() {
     
     const mySubTasks: Array<{order: Order, subTask: any}> = [];
     state.orders.forEach(order => {
-      order.subTasks.forEach(subTask => {
-        if (subTask.assignedTo === state.currentUser?.id && subTask.status !== 'completed') {
-          mySubTasks.push({ order, subTask });
-        }
-      });
+      if (Array.isArray(order.subTasks)) {
+        order.subTasks.forEach(subTask => {
+          if (subTask.assignedTo === state.currentUser?.id && subTask.status !== 'completed') {
+            mySubTasks.push({ order, subTask });
+          }
+        });
+      }
     });
     return mySubTasks;
   };
@@ -84,7 +86,8 @@ export default function WorkshopDashboard() {
       case 'accepted': return 'bg-blue-100 text-blue-800';
       case 'in_progress': return 'bg-purple-100 text-purple-800';
       case 'revision': return 'bg-orange-100 text-orange-800';
-      case 'rework': return 'bg-red-100 text-red-800'; // Nacharbeit
+      case 'rework': return 'bg-orange-100 text-orange-800'; // Konsistente Farbe für Nacharbeit
+      case 'waiting_confirmation': return 'bg-cyan-100 text-cyan-800';
       case 'completed': return 'bg-green-100 text-green-800';
       default: return 'bg-gray-100 text-gray-800';
     }
@@ -96,7 +99,8 @@ export default function WorkshopDashboard() {
       case 'accepted': return 'Angenommen';
       case 'in_progress': return 'In Bearbeitung';
       case 'revision': return 'Überarbeitung';
-      case 'rework': return 'Nacharbeit'; // Nacharbeit
+      case 'rework': return 'In Nacharbeit'; // Konsistenter Text
+      case 'waiting_confirmation': return 'Wartet auf Abnahme';
       case 'completed': return 'Abgeschlossen';
       default: return status;
     }
@@ -134,12 +138,14 @@ export default function WorkshopDashboard() {
     }> = [];
 
     filteredOrders.forEach(order => {
+      // Sicherstellen, dass order und order.subTasks definiert sind
+      if (!order) return;
       displayItems.push({ type: 'order', order });
       
       // Add subtasks for this order if user has access
-      if (state.currentUser?.role === 'admin' || 
+      if (Array.isArray(order.subTasks) && (state.currentUser?.role === 'admin' || 
           order.assignedTo === state.currentUser?.id ||
-          order.subTasks.some(st => st.assignedTo === state.currentUser?.id)) {
+          order.subTasks.some(st => st.assignedTo === state.currentUser?.id))) {
         
         order.subTasks.forEach(subTask => {
           if (state.currentUser?.role === 'admin' || 
@@ -162,8 +168,8 @@ export default function WorkshopDashboard() {
   const displayItems = createDisplayList();
 
   // Listen nach Auftragstyp trennen
-  const fertigungOrders = displayItems.filter(item => item.type === 'order' && item.order.orderType === 'fertigung');
-  const serviceOrders = displayItems.filter(item => item.type === 'order' && item.order.orderType === 'service');
+  const fertigungOrders = displayItems.filter(item => item.type === 'order' && item.order && item.order.orderType === 'fertigung');
+  const serviceOrders = displayItems.filter(item => item.type === 'order' && item.order && item.order.orderType === 'service');
 
   if (showAccountManagement) {
     return <AccountManagement onClose={() => setShowAccountManagement(false)} />;

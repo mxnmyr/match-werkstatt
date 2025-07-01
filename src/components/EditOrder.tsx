@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, Upload, FileText, Trash2, Save } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { Order, PDFDocument } from '../types';
+import { Order, PDFDocument, RevisionComment } from '../types';
 
 interface EditOrderProps {
   order: Order;
@@ -179,6 +179,23 @@ export default function EditOrder({ order, onClose }: EditOrderProps) {
               </select>
             </div>
           </div>
+
+          {/* Revision History */}
+          {order.revisionHistory && Array.isArray(order.revisionHistory) && order.revisionHistory.length > 0 && (
+            <div className="md:col-span-2">
+              <h3 className="text-lg font-semibold text-gray-800 mb-3 border-t pt-6">Kommentare zur Überarbeitung</h3>
+              <div className="space-y-4 bg-orange-50 rounded-lg p-4 border border-orange-200 max-h-60 overflow-y-auto">
+                {order.revisionHistory.map((entry: RevisionComment, index: number) => (
+                  <div key={index} className="p-3 bg-white rounded-md shadow-sm">
+                    <p className="text-sm text-gray-800 whitespace-pre-wrap">{entry.comment}</p>
+                    <p className="text-xs text-gray-500 mt-2">
+                      <strong>{entry.userName}</strong> am {new Date(entry.createdAt).toLocaleString('de-DE')}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">

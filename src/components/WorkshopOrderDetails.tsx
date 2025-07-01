@@ -13,7 +13,7 @@ import {
   Upload
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { Order, SubTask, PDFDocument, RevisionComment } from '../types';
+import { Order, SubTask, PDFDocument, RevisionComment, NoteHistory, ReworkComment } from '../types';
 
 interface WorkshopOrderDetailsProps {
   order: Order;
@@ -24,9 +24,9 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   const { state, dispatch } = useApp();
   const [localOrder, setLocalOrder] = useState(order);
 
-  const [estimatedHours, setEstimatedHours] = useState(localOrder.estimatedHours.toString());
-  const [actualHours, setActualHours] = useState(localOrder.actualHours.toString());
-  const [notes, setNotes] = useState(localOrder.notes);
+  const [estimatedHours, setEstimatedHours] = useState(localOrder.estimatedHours?.toString() || '0');
+  const [actualHours, setActualHours] = useState(localOrder.actualHours?.toString() || '0');
+  const [notes, setNotes] = useState(localOrder.notes || '');
   const [showAddSubTask, setShowAddSubTask] = useState(false);
   const [subTaskTitle, setSubTaskTitle] = useState('');
   const [subTaskDescription, setSubTaskDescription] = useState('');
@@ -76,7 +76,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
       estimatedHours: parseFloat(estimatedHours) || 0,
       actualHours: parseFloat(actualHours) || 0,
       notes,
-      canEdit: newStatus === 'revision' ? true : undefined,
+      documents: localOrder.documents || [], // Dokumente explizit mitübernehmen
       updatedAt: new Date()
     };
     let message = '';
@@ -93,32 +93,52 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   };
 
   // Revision absenden
-  const submitRevision = () => {
+  const submitRevision = async () => {
     if (!revisionComment.trim()) {
       setRevisionError('Kommentar ist erforderlich!');
       return;
     }
     setRevisionError('');
     setShowRevisionDialog(false);
-    const updatedOrder = {
-      ...localOrder,
-      status: 'revision' as Order['status'],
-      assignedTo: assignedTo || null,
-      estimatedHours: parseFloat(estimatedHours) || 0,
-      actualHours: parseFloat(actualHours) || 0,
-      notes,
-      canEdit: true,
-      updatedAt: new Date()
-    };
-    updateOrder(
-      updatedOrder,
-      'Auftrag wurde zur Überarbeitung zurückgeschickt',
-      {
+    
+    try {
+      const requestBody = {
+        id: localOrder.id,
+        status: 'revision',
+        assignedTo: assignedTo || null,
+        estimatedHours: parseFloat(estimatedHours) || 0,
+        actualHours: parseFloat(actualHours) || 0,
+        notes,
+        documents: localOrder.documents || [], // Dokumente explizit mitübernehmen
+        canEdit: true,
         revisionComment,
         userId: state.currentUser?.id,
-        userName: state.currentUser?.name
+        userName: state.currentUser?.name,
+        updatedAt: new Date()
+      };
+      
+      const response = await fetch(`/api/orders/${localOrder.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      });
+      
+      if (!response.ok) {
+        dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Fehler beim Speichern!', type: 'error' } });
+        return;
       }
-    );
+      
+      // Nach erfolgreichem Update: Auftrag neu laden
+      const fresh = await fetch(`/api/orders`);
+      const allOrders = await fresh.json();
+      const freshOrder = allOrders.find((o: Order) => o.id === localOrder.id);
+      if (freshOrder) setLocalOrder(freshOrder);
+      
+      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Auftrag wurde zur Überarbeitung zurückgeschickt', type: 'success' } });
+    } catch (err) {
+      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Netzwerkfehler beim Speichern!', type: 'error' } });
+    }
+    
     setRevisionComment('');
   };
 
@@ -249,7 +269,17 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   };
 
   const handleDownload = (doc: any) => {
-    if (doc.file) {
+    // reworkComment docs might just have a filename as URL
+    if (doc.url && !doc.url.startsWith('blob:')) {
+        const a = document.createElement('a');
+        // Prepend server address if it's a relative path
+        a.href = doc.url.startsWith('/uploads/') ? `http://localhost:3001${doc.url}` : doc.url;
+        a.download = doc.name;
+        a.target = '_blank'; // Open in new tab to prevent navigation issues
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    } else if (doc.file) { // For newly uploaded files before saving
       const url = URL.createObjectURL(doc.file);
       const a = document.createElement('a');
       a.href = url;
@@ -258,13 +288,6 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } else if (doc.url) {
-      const a = document.createElement('a');
-      a.href = doc.url;
-      a.download = doc.name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
     }
   };
 
@@ -274,7 +297,9 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
       case 'accepted': return 'bg-blue-100 text-blue-800';
       case 'in_progress': return 'bg-purple-100 text-purple-800';
       case 'revision': return 'bg-orange-100 text-orange-800';
+      case 'rework': return 'bg-orange-100 text-orange-800';
       case 'completed': return 'bg-green-100 text-green-800';
+      case 'waiting_confirmation': return 'bg-cyan-100 text-cyan-800';
       default: return 'bg-gray-100 text-gray-800';
     }
   };
@@ -285,7 +310,9 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
       case 'accepted': return 'Angenommen';
       case 'in_progress': return 'In Bearbeitung';
       case 'revision': return 'Überarbeitung';
+      case 'rework': return 'In Nacharbeit';
       case 'completed': return 'Abgeschlossen';
+      case 'waiting_confirmation': return 'Wartet auf Abnahme';
       default: return status;
     }
   };
@@ -371,9 +398,43 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                 <p className="text-gray-700 bg-gray-50 rounded-lg p-4">{localOrder.description}</p>
               </div>
 
+              {/* Revision History (Werkstatt an Kunde) */}
+              {localOrder.revisionHistory && Array.isArray(localOrder.revisionHistory) && localOrder.revisionHistory.length > 0 && (
+                <div>
+                  <h4 className="text-md font-semibold text-gray-900 mb-2">Werkstatt-Kommentare</h4>
+                  <div className="space-y-3 bg-orange-50 rounded-lg p-4 border border-orange-200">
+                    {localOrder.revisionHistory.map((entry: any, index: number) => (
+                      <div key={index} className="p-3 bg-white rounded-md shadow-sm">
+                        <p className="text-sm text-gray-800 whitespace-pre-wrap">{entry.comment}</p>
+                        <p className="text-xs text-gray-500 mt-2">
+                          <strong>{entry.userName}</strong> am {new Date(entry.createdAt).toLocaleString('de-DE')}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Rework Comments (Kunde an Werkstatt) */}
+              {localOrder.reworkComments && Array.isArray(localOrder.reworkComments) && localOrder.reworkComments.length > 0 && (
+                <div>
+                  <h4 className="text-md font-semibold text-gray-900 mb-2">Kunden-Kommentare zur Nacharbeit</h4>
+                  <div className="space-y-3 bg-blue-50 rounded-lg p-4 border border-blue-200">
+                    {localOrder.reworkComments.map((entry: any, index: number) => (
+                      <div key={index} className="p-3 bg-white rounded-md shadow-sm">
+                        <p className="text-sm text-gray-800 whitespace-pre-wrap">{entry.comment}</p>
+                        <p className="text-xs text-gray-500 mt-2">
+                          <strong>{entry.userName}</strong> am {new Date(entry.createdAt).toLocaleString('de-DE')}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div>
                 <h4 className="text-md font-semibold text-gray-900 mb-2">Dokumente</h4>
-                {localOrder.documents.length > 0 ? (
+                {localOrder.documents && localOrder.documents.length > 0 ? (
                   <div className="space-y-2">
                     {localOrder.documents.map((doc) => (
                       <div key={doc.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
@@ -466,6 +527,23 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                       placeholder="Notizen und Kommentare..."
                     />
                   </div>
+
+                  {/* Notiz-Historie */}
+                  {localOrder.noteHistory && localOrder.noteHistory.length > 0 && (
+                    <div>
+                      <h4 className="text-md font-semibold text-gray-900 mt-4 mb-2">Notiz-Verlauf</h4>
+                      <div className="space-y-3 bg-gray-50 rounded-lg p-4 max-h-48 overflow-y-auto">
+                        {localOrder.noteHistory.map((entry: NoteHistory) => (
+                          <div key={entry.id} className="p-3 bg-white rounded-md shadow-sm border">
+                            <p className="text-sm text-gray-800 whitespace-pre-wrap">{entry.notes}</p>
+                            <p className="text-xs text-gray-500 mt-2">
+                              {new Date(entry.createdAt).toLocaleString('de-DE')}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -657,7 +735,8 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
               </div>
             )}
 
-            {localOrder.subTasks.length > 0 ? (
+            {/* Subtasks sicher abfragen */}
+            {Array.isArray(localOrder.subTasks) && localOrder.subTasks.length > 0 ? (
               <div className="space-y-3">
                 {localOrder.subTasks.map((subTask) => (
                   <div key={subTask.id} className="bg-gray-50 rounded-lg p-4">

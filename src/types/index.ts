@@ -21,6 +21,20 @@ export interface RevisionComment {
   createdAt: string; // ISO-String
 }
 
+export interface ReworkComment {
+  comment: string;
+  userId: string;
+  userName: string;
+  documents: PDFDocument[];
+  requestedAt: string;
+}
+
+export interface NoteHistory {
+  id: string;
+  notes: string;
+  createdAt: string; // ISO-String
+}
+
 export interface Order {
   id: string;
   title: string;
@@ -50,6 +64,8 @@ export interface Order {
   };
   orderType: 'fertigung' | 'service'; // Auftragstyp für Nummerngenerierung
   revisionHistory: RevisionComment[];
+  reworkComments: ReworkComment[];
+  noteHistory: NoteHistory[];
 }
 
 export interface SubTask {

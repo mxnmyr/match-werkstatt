@@ -108,8 +108,15 @@ app.delete('/api/users/:id', async (req, res) => {
 app.get('/api/orders', async (req, res) => {
   try {
     const orders = await prisma.order.findMany({
-      include: { documents: true },
-      orderBy: { createdAt: 'desc' }
+      include: {
+        documents: true,
+        noteHistory: {
+          orderBy: {
+            createdAt: 'desc',
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
     });
     res.json(orders);
   } catch (err) {
@@ -139,12 +146,25 @@ app.post('/api/orders', async (req, res) => {
     // ---
     const order = await prisma.order.create({
       data: {
-        ...orderData,
         id: auftragsnummer,
+        title: orderData.title,
+        description: orderData.description,
+        clientId: orderData.clientId,
+        clientName: orderData.clientName,
         deadline: new Date(orderData.deadline),
+        costCenter: orderData.costCenter,
+        priority: orderData.priority || 'medium',
+        status: orderData.status || 'pending',
+        estimatedHours: orderData.estimatedHours || 0,
+        actualHours: orderData.actualHours || 0,
+        assignedTo: orderData.assignedTo || null,
+        notes: orderData.notes || '',
+        orderType: orderData.orderType,
+        subTasks: orderData.subTasks || [],
+        revisionHistory: orderData.revisionHistory || [],
+        reworkComments: orderData.reworkComments || [],
         createdAt: new Date(),
         updatedAt: new Date(),
-        subTasks: orderData.subTasks || [],
         documents: {
           create: (documents || []).map(doc => ({
             name: doc.name,
@@ -163,6 +183,10 @@ app.post('/api/orders', async (req, res) => {
 
 app.put('/api/orders/:id', async (req, res) => {
   try {
+    console.log('=== PUT /api/orders/:id RECEIVED ===');
+    console.log('Order ID:', req.params.id);
+    console.log('Request Body:', JSON.stringify(req.body, null, 2));
+    
     // Nur erlaubte Felder übernehmen
     const {
       title,
@@ -179,26 +203,73 @@ app.put('/api/orders/:id', async (req, res) => {
       notes,
       orderType,
       subTasks,
-      revisionComment, // NEU: Kommentar für Nacharbeit
-      userId,          // NEU: User, der den Kommentar anlegt
-      userName         // NEU: Name des Users
+      documents,       // Dokumente explizit extrahieren
+      revisionRequest, // Vom Kunden für Nacharbeit
+      revisionComment, // Von Werkstatt für Überarbeitung
+      userId,          
+      userName         
     } = req.body;
+
+    console.log('=== EXTRACTED FIELDS ===');
+    console.log('status:', status);
+    console.log('revisionRequest:', revisionRequest);
+    console.log('userId:', userId);
+    console.log('userName:', userName);
+    console.log('========================');
 
     // Hole bisherigen Verlauf
     const existingOrder = await prisma.order.findUnique({ where: { id: req.params.id } });
+    if (!existingOrder) {
+      return res.status(404).json({ error: 'Auftrag nicht gefunden' });
+    }
     let revisionHistory = Array.isArray(existingOrder.revisionHistory) ? existingOrder.revisionHistory : [];
+    let reworkComments = Array.isArray(existingOrder.reworkComments) ? existingOrder.reworkComments : [];
 
-    // Wenn Status auf revision gesetzt wird und ein Kommentar übergeben wurde, neuen Verlaufseintrag anhängen
-    if (status === 'revision' && revisionComment && userId && userName) {
-      revisionHistory = [
-        ...revisionHistory,
-        {
-          comment: revisionComment,
-          userId,
-          userName,
-          createdAt: new Date().toISOString()
-        }
-      ];
+    // Wenn Notizen geändert wurden, alten Stand historisieren
+    if (notes !== undefined && notes !== existingOrder.notes) {
+      await prisma.noteHistory.create({
+        data: {
+          orderId: req.params.id,
+          notes: existingOrder.notes || '',
+          createdAt: new Date(),
+        },
+      });
+    }
+
+    // Fallback: userId/userName ggf. aus revisionRequest holen, falls auf Top-Level nicht vorhanden
+    let effectiveUserId = userId;
+    let effectiveUserName = userName;
+    // Das revisionRequest-Objekt wird nicht mehr verwendet, der Fallback ist nicht mehr nötig.
+    // if ((!effectiveUserId || !effectiveUserName) && revisionRequest) {
+    //   if (revisionRequest.userId && revisionRequest.userName) {
+    //     effectiveUserId = revisionRequest.userId;
+    //     effectiveUserName = revisionRequest.userName;
+    //     console.log('Fallback: userId/userName aus revisionRequest entnommen');
+    //   }
+    // }
+
+    // Fall 1: Werkstatt schickt Auftrag zur "Überarbeitung" an den Kunden
+    if (status === 'revision' && revisionComment && effectiveUserId && effectiveUserName) {
+      console.log('Fall 1: Werkstatt-Überarbeitung wird verarbeitet...');
+      revisionHistory.push({
+        comment: revisionComment,
+        userId: effectiveUserId,
+        userName: effectiveUserName,
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    // Fall 2: Kunde schickt Auftrag zur "Nacharbeit" an die Werkstatt
+    // Logik korrigiert: Prüft jetzt auf `revisionComment` statt `revisionRequest`
+    if (status === 'rework' && revisionComment && effectiveUserId && effectiveUserName) {
+      console.log('Fall 2: Kunden-Nacharbeit wird verarbeitet...');
+      reworkComments.push({
+        comment: revisionComment, // Korrigiert: `revisionComment` direkt verwenden
+        userId: effectiveUserId,
+        userName: effectiveUserName,
+        documents: [], // Dokumente werden jetzt separat gehandhabt
+        requestedAt: new Date().toISOString()
+      });
     }
 
     const updateData = {
@@ -216,19 +287,39 @@ app.put('/api/orders/:id', async (req, res) => {
       notes,
       orderType,
       subTasks: subTasks || [],
-      revisionHistory, // Verlauf speichern
+      revisionHistory, // Verlauf Werkstatt -> Kunde
+      reworkComments,  // Verlauf Kunde -> Werkstatt
       updatedAt: new Date()
     };
     // Entferne undefined Werte
     Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
     console.log('PUT /api/orders/:id updateData:', updateData);
+    
+    // Dokumente werden durch das include automatisch mitgeladen, 
+    // sie müssen nicht explizit im updateData stehen da sie eine separate Tabelle sind
     const order = await prisma.order.update({
       where: { id: req.params.id },
       data: updateData,
-      include: { documents: true }
+      include: {
+        documents: true,
+        noteHistory: {
+          orderBy: {
+            createdAt: 'desc',
+          },
+        },
+      },
     });
     // WebSocket-Broadcast für sofortiges Update
-    const allOrders = await prisma.order.findMany({ include: { documents: true } });
+    const allOrders = await prisma.order.findMany({
+      include: {
+        documents: true,
+        noteHistory: {
+          orderBy: {
+            createdAt: 'desc',
+          },
+        },
+      },
+    });
     broadcast('ordersUpdated', allOrders);
     res.json(order);
   } catch (err) {

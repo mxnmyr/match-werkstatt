@@ -32,8 +32,8 @@ export default function ClientDashboard() {
   );
 
   const waitingOrders = userOrders.filter(order => order.status === 'waiting_confirmation');
-  // Überarbeitungsaufträge werden wieder im Kundendashboard angezeigt, nur Nacharbeit bleibt ausgeblendet:
-  const otherOrders = userOrders.filter(order => order.status !== 'waiting_confirmation' && order.status !== 'rework');
+  // Aufträge zur Überarbeitung oder Nacharbeit werden im Dashboard angezeigt
+  const otherOrders = userOrders.filter(order => order.status !== 'waiting_confirmation');
 
   // Archivierte Aufträge des aktuellen Kunden
   const archivedOrders = state.orders.filter(order => order.clientId === state.currentUser?.id && order.status === 'archived');
@@ -55,6 +55,7 @@ export default function ClientDashboard() {
       case 'accepted': return 'Angenommen';
       case 'in_progress': return 'In Bearbeitung';
       case 'revision': return 'Überarbeitung erforderlich';
+      case 'rework': return 'Wird nachgearbeitet';
       case 'completed': return 'Abgeschlossen';
       default: return status;
     }
@@ -119,6 +120,17 @@ export default function ClientDashboard() {
                     </div>
                   )}
                   
+                  {order.status === 'rework' && (
+                    <div className="mb-4 p-3 bg-blue-100 border border-blue-200 rounded-lg">
+                      <p className="text-sm text-blue-800 font-medium">
+                        Auftrag in Nacharbeit
+                      </p>
+                      <p className="text-xs text-blue-700 mt-1">
+                        Die Werkstatt bearbeitet Ihre Anmerkungen.
+                      </p>
+                    </div>
+                  )}
+
                   <p className="text-gray-600 text-sm mb-4 line-clamp-2">{order.description}</p>
                   
                   <div className="space-y-2 mb-4">
