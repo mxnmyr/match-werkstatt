@@ -26,6 +26,7 @@ model Order {
   orderType     String
   subTasks      Json?
   documents     Document[]
+  components    Component[]  // Neue Bauteile-Relation
   revisionHistory  Json? // Kommentare von der Werkstatt an den Kunden
   reworkComments   Json? // Kommentare vom Kunden an die Werkstatt
   confirmationNote String?       @db.Text
@@ -72,4 +73,23 @@ model NoteHistory {
   order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   notes     String
   createdAt DateTime @default(now())
+}
+
+model Component {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId     String
+  documents   ComponentDocument[]
+  createdAt   DateTime @default(now())
+}
+
+model ComponentDocument {
+  id          String    @id @default(uuid())
+  name        String
+  url         String
+  uploadDate  DateTime
+  component   Component @relation(fields: [componentId], references: [id], onDelete: Cascade)
+  componentId String
 }

@@ -348,6 +348,53 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                   <p className="text-gray-500 text-sm">Keine Dokumente hochgeladen</p>
                 )}
               </div>
+
+              {/* Bauteile-Bereich */}
+              {currentOrder.components && currentOrder.components.length > 0 && (
+                <div>
+                  <h4 className="text-md font-semibold text-gray-900 mb-2">Bauteile</h4>
+                  <div className="space-y-4">
+                    {currentOrder.components.map((component) => (
+                      <div key={component.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                        <div className="mb-3">
+                          <h5 className="font-medium text-gray-900 text-sm">{component.title}</h5>
+                          {component.description && (
+                            <p className="text-gray-600 text-sm mt-1">{component.description}</p>
+                          )}
+                        </div>
+                        
+                        {component.documents && component.documents.length > 0 && (
+                          <div>
+                            <h6 className="text-xs font-medium text-gray-700 mb-2">Dokumente:</h6>
+                            <div className="space-y-1">
+                              {component.documents.map((doc) => (
+                                <div key={doc.id} className="flex items-center justify-between p-2 bg-white rounded border text-sm">
+                                  <div className="flex items-center">
+                                    <FileText className="w-4 h-4 text-red-600 mr-2" />
+                                    <div>
+                                      <span className="text-gray-900">{doc.name}</span>
+                                      <div className="text-xs text-gray-500">
+                                        {new Date(doc.uploadDate).toLocaleDateString('de-DE')}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={() => handleDownload(doc)}
+                                    className="text-blue-600 hover:text-blue-800 transition-colors flex items-center"
+                                  >
+                                    <Download className="w-3 h-3 mr-1" />
+                                    <span className="text-xs">Download</span>
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="space-y-6">

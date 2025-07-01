@@ -111,6 +111,11 @@ app.get('/api/orders', async (req, res) => {
     const orders = await prisma.order.findMany({
       include: {
         documents: true,
+        components: {
+          include: {
+            documents: true
+          }
+        },
         noteHistory: {
           orderBy: {
             createdAt: 'desc',
@@ -128,7 +133,7 @@ app.get('/api/orders', async (req, res) => {
 
 app.post('/api/orders', async (req, res) => {
   try {
-    const { documents, ...orderData } = req.body;
+    const { documents, components, ...orderData } = req.body;
     // --- Auftragsnummer generieren ---
     const today = new Date();
     const dateStr = today.toISOString().slice(2, 10).replace(/-/g, ''); // YYMMDD
@@ -174,9 +179,29 @@ app.post('/api/orders', async (req, res) => {
             url: doc.url,
             uploadDate: doc.uploadDate ? new Date(doc.uploadDate) : new Date()
           }))
+        },
+        components: {
+          create: (components || []).map(comp => ({
+            title: comp.title,
+            description: comp.description || '',
+            documents: {
+              create: (comp.documents || []).map(doc => ({
+                name: doc.name,
+                url: doc.url,
+                uploadDate: doc.uploadDate ? new Date(doc.uploadDate) : new Date()
+              }))
+            }
+          }))
         }
       },
-      include: { documents: true }
+      include: { 
+        documents: true,
+        components: {
+          include: {
+            documents: true
+          }
+        }
+      }
     });
     res.json(order);
   } catch (err) {
@@ -323,6 +348,11 @@ app.put('/api/orders/:id', async (req, res) => {
       data: updateData,
       include: {
         documents: true,
+        components: {
+          include: {
+            documents: true
+          }
+        },
         noteHistory: {
           orderBy: {
             createdAt: 'desc',
@@ -335,6 +365,11 @@ app.put('/api/orders/:id', async (req, res) => {
     const allOrders = await prisma.order.findMany({
       include: {
         documents: true,
+        components: {
+          include: {
+            documents: true
+          }
+        },
         noteHistory: {
           orderBy: {
             createdAt: 'desc',
@@ -442,6 +477,11 @@ app.post('/api/orders/:id/upload-title-image', memoryUpload.single('file'), asyn
       },
       include: { 
         documents: true,
+        components: {
+          include: {
+            documents: true
+          }
+        },
         noteHistory: true,
         titleImage: true
        },
@@ -451,6 +491,11 @@ app.post('/api/orders/:id/upload-title-image', memoryUpload.single('file'), asyn
     const allOrders = await prisma.order.findMany({
       include: {
         documents: true,
+        components: {
+          include: {
+            documents: true
+          }
+        },
         noteHistory: {
           orderBy: {
             createdAt: 'desc',

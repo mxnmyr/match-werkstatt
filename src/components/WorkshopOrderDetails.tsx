@@ -13,7 +13,7 @@ import {
   Upload
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { Order, SubTask, PDFDocument, RevisionComment, NoteHistory, ReworkComment } from '../types';
+import { Order, SubTask, PDFDocument, RevisionComment, NoteHistory } from '../types';
 
 interface WorkshopOrderDetailsProps {
   order: Order;
@@ -34,6 +34,8 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   const [subTaskDocuments, setSubTaskDocuments] = useState<PDFDocument[]>([]);
   const [assignedTo, setAssignedTo] = useState(localOrder.assignedTo || '');
   const [subTaskAssignedTo, setSubTaskAssignedTo] = useState('');
+  const [subTaskScopeType, setSubTaskScopeType] = useState<'order' | 'component'>('order');
+  const [subTaskAssignedComponentId, setSubTaskAssignedComponentId] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [showRevisionDialog, setShowRevisionDialog] = useState(false);
   const [revisionComment, setRevisionComment] = useState('');
@@ -261,6 +263,11 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
 
   const handleAddSubTask = async () => {
     if (!subTaskTitle.trim()) return;
+    if (!subTaskAssignedTo.trim()) {
+      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Bitte einen Mitarbeiter zuweisen!', type: 'error' } });
+      return;
+    }
+    
     const newSubTask: SubTask = {
       id: `subtask_${Date.now()}_${Math.random()}`,
       orderId: localOrder.id,
@@ -269,7 +276,9 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
       estimatedHours: parseFloat(subTaskHours) || 0,
       actualHours: 0,
       status: 'pending',
-      assignedTo: subTaskAssignedTo || null,
+      assignedTo: subTaskAssignedTo, // Mitarbeiter-ID (Pflicht)
+      scopeType: subTaskScopeType, // Scope: 'order' oder 'component'
+      assignedComponentId: subTaskScopeType === 'component' ? subTaskAssignedComponentId : null,
       notes: '',
       documents: subTaskDocuments,
       createdAt: new Date(),
@@ -285,6 +294,8 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     setSubTaskDescription('');
     setSubTaskHours('');
     setSubTaskAssignedTo('');
+    setSubTaskScopeType('order');
+    setSubTaskAssignedComponentId('');
     setSubTaskDocuments([]);
     setShowAddSubTask(false);
   };
@@ -385,6 +396,27 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     } catch (err) {
       alert('Netzwerkfehler beim Löschen!');
     }
+  };
+
+  // Hilfsfunktion für die Anzeige der Zuweisungsinformationen
+  const getAssignmentDisplay = (subTask: SubTask) => {
+    // Mitarbeiter-Zuweisung anzeigen
+    let assignedUser = 'Nicht zugewiesen';
+    if (subTask.assignedTo) {
+      const employee = state.workshopAccounts.find(acc => acc.id === subTask.assignedTo);
+      assignedUser = employee ? `👤 ${employee.name}` : 'Unbekannter Mitarbeiter';
+    }
+    
+    // Scope anzeigen
+    let scope = '';
+    if (subTask.scopeType === 'component' && subTask.assignedComponentId) {
+      const component = localOrder.components.find(comp => comp.id === subTask.assignedComponentId);
+      scope = component ? ` → 🔧 ${component.title}` : ' → Unbekanntes Bauteil';
+    } else if (subTask.scopeType === 'order') {
+      scope = ' → 📋 Gesamtauftrag';
+    }
+    
+    return assignedUser + scope;
   };
 
   return (
@@ -538,6 +570,48 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                   <p className="text-gray-500 text-sm">Keine Dokumente hochgeladen</p>
                 )}
               </div>
+
+              {/* Bauteile-Bereich */}
+              {localOrder.components && localOrder.components.length > 0 && (
+                <div>
+                  <h4 className="text-md font-semibold text-gray-900 mb-2">Bauteile</h4>
+                  <div className="space-y-4">
+                    {localOrder.components.map((component) => (
+                      <div key={component.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                        <div className="mb-3">
+                          <h5 className="font-medium text-gray-900 text-sm">{component.title}</h5>
+                          {component.description && (
+                            <p className="text-gray-600 text-sm mt-1">{component.description}</p>
+                          )}
+                        </div>
+                        
+                        {component.documents && component.documents.length > 0 && (
+                          <div>
+                            <h6 className="text-xs font-medium text-gray-700 mb-2">Dokumente:</h6>
+                            <div className="space-y-1">
+                              {component.documents.map((doc) => (
+                                <div key={doc.id} className="flex items-center justify-between p-2 bg-white rounded border text-sm">
+                                  <div className="flex items-center">
+                                    <FileText className="w-4 h-4 text-red-600 mr-2" />
+                                    <span className="text-gray-900">{doc.name}</span>
+                                  </div>
+                                  <button
+                                    onClick={() => handleDownload(doc)}
+                                    className="text-blue-600 hover:text-blue-800 transition-colors flex items-center"
+                                  >
+                                    <Download className="w-3 h-3 mr-1" />
+                                    <span className="text-xs">Download</span>
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Right Column */}
@@ -737,16 +811,45 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                     min="0"
                     step="0.5"
                   />
+                  
+                  {/* Mitarbeiter-Auswahl (Pflichtfeld) */}
                   <select
                     value={subTaskAssignedTo}
                     onChange={e => setSubTaskAssignedTo(e.target.value)}
                     className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    required
                   >
-                    <option value="">Mitarbeiter zuweisen (optional)</option>
+                    <option value="">Mitarbeiter auswählen *</option>
                     {state.workshopAccounts.filter(acc => acc.role === 'workshop').map(acc => (
                       <option key={acc.id} value={acc.id}>{acc.name}</option>
                     ))}
                   </select>
+                  
+                  {/* Scope-Auswahl */}
+                  <select
+                    value={subTaskScopeType}
+                    onChange={e => setSubTaskScopeType(e.target.value as 'order' | 'component')}
+                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="order">Gesamter Auftrag</option>
+                    <option value="component">Bauteil</option>
+                  </select>
+                  
+                  {/* Bauteil-Auswahl (nur bei scopeType='component') */}
+                  {subTaskScopeType === 'component' && (
+                    <div className="md:col-span-2">
+                      <select
+                        value={subTaskAssignedComponentId}
+                        onChange={e => setSubTaskAssignedComponentId(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="">Bauteil auswählen</option>
+                        {localOrder.components.map(comp => (
+                          <option key={comp.id} value={comp.id}>{comp.title}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
                 <textarea
                   placeholder="Beschreibung der Unteraufgabe"
@@ -886,29 +989,63 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                       <div>
                         <span className="text-gray-600">Zugewiesen: </span>
                         <span className="font-medium">
-                          {subTask.assignedTo 
-                            ? state.workshopAccounts.find(acc => acc.id === subTask.assignedTo)?.name 
-                            : 'Nicht zugewiesen'
-                          }
+                          {getAssignmentDisplay(subTask)}
                         </span>
                       </div>
                     </div>
 
                     <div className="flex justify-between items-center">
-                      <div className="flex space-x-2">
+                      <div className="flex space-x-2 flex-wrap">
+                        {/* Mitarbeiter-Zuweisung (Pflichtfeld) */}
                         <select
                           value={subTask.assignedTo || ''}
                           onChange={(e) => handleUpdateSubTask(subTask, { assignedTo: e.target.value || null })}
                           disabled={!canModify && state.currentUser?.role !== 'admin'}
                           className="text-xs px-2 py-1 border border-gray-300 rounded disabled:bg-gray-100"
                         >
-                          <option value="">Nicht zugewiesen</option>
-                          {state.workshopAccounts.map((account) => (
+                          <option value="">Mitarbeiter auswählen</option>
+                          {state.workshopAccounts.filter(acc => acc.role === 'workshop').map((account) => (
                             <option key={account.id} value={account.id}>
                               {account.name}
                             </option>
                           ))}
                         </select>
+                        
+                        {/* Scope-Auswahl */}
+                        <select
+                          value={subTask.scopeType || 'order'}
+                          onChange={(e) => {
+                            const newScopeType = e.target.value as 'order' | 'component';
+                            let updates: Partial<SubTask> = { 
+                              scopeType: newScopeType,
+                              assignedComponentId: newScopeType === 'order' ? null : subTask.assignedComponentId
+                            };
+                            handleUpdateSubTask(subTask, updates);
+                          }}
+                          disabled={!canModify && state.currentUser?.role !== 'admin'}
+                          className="text-xs px-2 py-1 border border-gray-300 rounded disabled:bg-gray-100"
+                        >
+                          <option value="order">Gesamtauftrag</option>
+                          <option value="component">Bauteil</option>
+                        </select>
+                        
+                        {/* Bauteil-Auswahl (nur bei scopeType='component') */}
+                        {subTask.scopeType === 'component' && (
+                          <select
+                            value={subTask.assignedComponentId || ''}
+                            onChange={(e) => handleUpdateSubTask(subTask, { assignedComponentId: e.target.value || null })}
+                            disabled={!canModify && state.currentUser?.role !== 'admin'}
+                            className="text-xs px-2 py-1 border border-gray-300 rounded disabled:bg-gray-100"
+                          >
+                            <option value="">Bauteil auswählen</option>
+                            {localOrder.components.map((comp) => (
+                              <option key={comp.id} value={comp.id}>
+                                {comp.title}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        
                         <select
                           value={subTask.status}
                           onChange={(e) => handleUpdateSubTask(subTask, { status: e.target.value as SubTask['status'] })}

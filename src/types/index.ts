@@ -51,6 +51,7 @@ export interface Order {
   priority: 'low' | 'medium' | 'high';
   status: 'pending' | 'accepted' | 'in_progress' | 'revision' | 'rework' | 'completed' | 'archived' | 'waiting_confirmation';
   documents: PDFDocument[];
+  components: Component[]; // Neue Bauteile
   estimatedHours: number;
   actualHours: number;
   assignedTo: string | null;
@@ -83,7 +84,9 @@ export interface SubTask {
   estimatedHours: number;
   actualHours: number;
   status: 'pending' | 'in_progress' | 'completed';
-  assignedTo: string | null;
+  assignedTo: string | null; // Mitarbeiter-ID (Pflicht)
+  scopeType: 'order' | 'component'; // Scope: Gesamtauftrag oder Bauteil
+  assignedComponentId?: string | null; // ID des zugewiesenen Bauteils (nur bei scopeType='component')
   notes: string;
   documents: PDFDocument[];
   createdAt: Date;
@@ -112,4 +115,18 @@ export interface ClientAccount {
   isActive: boolean;
   isApproved: boolean; // Muss von Admin bestätigt werden
   createdAt: Date;
+}
+
+export interface Component {
+  id: string;
+  title: string;
+  description: string;
+  documents: PDFDocument[];
+}
+
+export interface ComponentDocument {
+  id: string;
+  name: string;
+  url: string;
+  uploadDate: Date;
 }

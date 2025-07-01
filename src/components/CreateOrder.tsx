@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, Upload, FileText, Trash2, Plus } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { Order, PDFDocument } from '../types';
+import { Order, PDFDocument, Component } from '../types';
 
 interface CreateOrderProps {
   onClose: () => void;
@@ -15,34 +15,12 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
   const [costCenter, setCostCenter] = useState('');
   const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium');
   const [documents, setDocuments] = useState<PDFDocument[]>([]);
-  const [titleImage, setTitleImage] = useState<File | null>(null);
+  const [components, setComponents] = useState<Component[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [orderType, setOrderType] = useState<'fertigung' | 'service'>('fertigung');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    let titleImageUrl: string | undefined = undefined;
-    if (titleImage) {
-      const formData = new FormData();
-      formData.append('file', titleImage);
-      try {
-        const response = await fetch('/api/upload', {
-          method: 'POST',
-          body: formData,
-        });
-        if (response.ok) {
-          const data = await response.json();
-          titleImageUrl = `/uploads/${data.filename}`;
-        } else {
-          alert('Fehler beim Hochladen des Titelbildes.');
-          return;
-        }
-      } catch (err) {
-        alert('Netzwerkfehler beim Hochladen des Titelbildes.');
-        return;
-      }
-    }
 
     const newOrder = {
       title,
@@ -54,7 +32,7 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
       priority,
       status: 'pending',
       documents,
-      titleImage: titleImageUrl, // Hinzugefügt
+      components, // Neue Bauteile hinzufügen
       estimatedHours: 0,
       actualHours: 0,
       assignedTo: null,
@@ -85,12 +63,6 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
     } catch (err) {
       console.error('Network error:', err);
       alert('Netzwerkfehler beim Anlegen des Auftrags!');
-    }
-  };
-
-  const handleTitleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setTitleImage(e.target.files[0]);
     }
   };
 
@@ -178,6 +150,79 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
       }
       return prev.filter(doc => doc.id !== id);
     });
+  };
+
+  // Funktionen für Bauteile-Management
+  const addComponent = () => {
+    const newComponent: Component = {
+      id: `comp_${Date.now()}_${Math.random()}`,
+      title: '',
+      description: '',
+      documents: []
+    };
+    setComponents(prev => [...prev, newComponent]);
+  };
+
+  const updateComponent = (id: string, field: keyof Component, value: any) => {
+    setComponents(prev => prev.map(comp => 
+      comp.id === id ? { ...comp, [field]: value } : comp
+    ));
+  };
+
+  const removeComponent = (id: string) => {
+    setComponents(prev => {
+      const compToRemove = prev.find(comp => comp.id === id);
+      // Cleanup URLs für Dokumente
+      compToRemove?.documents.forEach(doc => {
+        if (doc.url) {
+          URL.revokeObjectURL(doc.url);
+        }
+      });
+      return prev.filter(comp => comp.id !== id);
+    });
+  };
+
+  const handleComponentFileUpload = async (componentId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    try {
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      });
+      if (!response.ok) {
+        alert('Fehler beim Hochladen!');
+        return;
+      }
+      const data = await response.json();
+      const document: PDFDocument = {
+        id: `doc_${Date.now()}_${Math.random()}`,
+        name: data.originalname,
+        url: `/uploads/${data.filename}`,
+        uploadDate: new Date(),
+        file: undefined
+      };
+      
+      setComponents(prev => prev.map(comp => 
+        comp.id === componentId 
+          ? { ...comp, documents: [...comp.documents, document] }
+          : comp
+      ));
+    } catch (err) {
+      alert('Netzwerkfehler beim Hochladen!');
+    }
+  };
+
+  const removeComponentDocument = (componentId: string, docId: string) => {
+    setComponents(prev => prev.map(comp => 
+      comp.id === componentId 
+        ? { ...comp, documents: comp.documents.filter(doc => doc.id !== docId) }
+        : comp
+    ));
   };
 
   return (
@@ -287,7 +332,7 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              PDF Dokumente
+              Allgemeine PDF-Dokumente
             </label>
             <div
               className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
@@ -335,35 +380,113 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
             )}
           </div>
 
+          {/* Bauteile-Sektion */}
           <div className="md:col-span-2">
-            <label htmlFor="titleImage" className="block text-sm font-medium text-gray-700 mb-2">
-              Titelbild (optional)
-            </label>
-            <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
-              <div className="space-y-1 text-center">
-                {titleImage ? (
-                  <div>
-                    <img src={URL.createObjectURL(titleImage)} alt="Vorschau" className="mx-auto h-24 w-auto" />
-                    <p className="text-sm text-gray-500">{titleImage.name}</p>
-                    <button type="button" onClick={() => setTitleImage(null)} className="text-sm text-red-600 hover:text-red-800">
-                      Entfernen
-                    </button>
-                  </div>
-                ) : (
-                  <svg className="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
-                    <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                )}
-                <div className="flex text-sm text-gray-600">
-                  <label htmlFor="title-image-upload" className="relative cursor-pointer bg-white rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500">
-                    <span>{titleImage ? 'Anderes Bild' : 'Bild hochladen'}</span>
-                    <input id="title-image-upload" name="title-image-upload" type="file" className="sr-only" onChange={handleTitleImageChange} accept="image/*" />
-                  </label>
-                  <p className="pl-1">oder per Drag & Drop</p>
-                </div>
-                <p className="text-xs text-gray-500">PNG, JPG, GIF bis zu 10MB</p>
-              </div>
+            <div className="flex justify-between items-center mb-4">
+              <label className="block text-sm font-medium text-gray-700">
+                Bauteile (optional)
+              </label>
+              <button
+                type="button"
+                onClick={addComponent}
+                className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                <Plus className="w-4 h-4 mr-1" />
+                Bauteil hinzufügen
+              </button>
             </div>
+            
+            {components.length === 0 ? (
+              <div className="text-center py-6 border-2 border-dashed border-gray-300 rounded-lg">
+                <p className="text-gray-500 text-sm">Keine Bauteile hinzugefügt</p>
+                <p className="text-gray-400 text-xs mt-1">Klicken Sie auf "Bauteil hinzufügen", um Bauteile mit eigenen Beschreibungen und Dokumenten zu erstellen</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {components.map((component, index) => (
+                  <div key={component.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                    <div className="flex justify-between items-start mb-3">
+                      <h4 className="text-md font-medium text-gray-900">Bauteil {index + 1}</h4>
+                      <button
+                        type="button"
+                        onClick={() => removeComponent(component.id)}
+                        className="text-red-600 hover:text-red-800 transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Titel *
+                        </label>
+                        <input
+                          type="text"
+                          value={component.title}
+                          onChange={(e) => updateComponent(component.id, 'title', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          placeholder="z.B. Gehäuse, Schraube, etc."
+                          required={components.length > 0}
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Beschreibung
+                        </label>
+                        <textarea
+                          value={component.description}
+                          onChange={(e) => updateComponent(component.id, 'description', e.target.value)}
+                          rows={2}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          placeholder="Detaillierte Beschreibung des Bauteils..."
+                        />
+                      </div>
+                    </div>
+                    
+                    {/* Dokumente für Bauteil */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Dokumente für dieses Bauteil
+                      </label>
+                      <div className="flex items-center space-x-2 mb-2">
+                        <label className="cursor-pointer inline-flex items-center px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">
+                          <Upload className="w-4 h-4 mr-2" />
+                          PDF hochladen
+                          <input
+                            type="file"
+                            accept=".pdf"
+                            onChange={(e) => handleComponentFileUpload(component.id, e)}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                      
+                      {component.documents.length > 0 && (
+                        <div className="space-y-1">
+                          {component.documents.map((doc) => (
+                            <div key={doc.id} className="flex items-center justify-between p-2 bg-white rounded border">
+                              <div className="flex items-center">
+                                <FileText className="w-4 h-4 text-red-600 mr-2" />
+                                <span className="text-sm text-gray-900">{doc.name}</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeComponentDocument(component.id, doc.id)}
+                                className="text-red-600 hover:text-red-800 transition-colors"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="flex justify-between pt-6 border-t mt-6">
