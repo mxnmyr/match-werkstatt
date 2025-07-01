@@ -31,7 +31,19 @@ model Order {
   confirmationNote String?       @db.Text
   confirmationDate DateTime?
   canEdit          Boolean?      @default(false)
-  noteHistory      NoteHistory[] // Relation zu NoteHistory
+  noteHistory      NoteHistory[]
+
+  // Relation zum Titelbild
+  titleImage   Image? @relation(fields: [titleImageId], references: [id], onDelete: Cascade)
+  titleImageId String? @unique
+}
+
+model Image {
+  id        String   @id @default(uuid())
+  mimeType  String
+  data      Bytes
+  order     Order?
+  createdAt DateTime @default(now())
 }
 
 model Document {

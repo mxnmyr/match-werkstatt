@@ -15,11 +15,34 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
   const [costCenter, setCostCenter] = useState('');
   const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium');
   const [documents, setDocuments] = useState<PDFDocument[]>([]);
+  const [titleImage, setTitleImage] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [orderType, setOrderType] = useState<'fertigung' | 'service'>('fertigung');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    let titleImageUrl: string | undefined = undefined;
+    if (titleImage) {
+      const formData = new FormData();
+      formData.append('file', titleImage);
+      try {
+        const response = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        if (response.ok) {
+          const data = await response.json();
+          titleImageUrl = `/uploads/${data.filename}`;
+        } else {
+          alert('Fehler beim Hochladen des Titelbildes.');
+          return;
+        }
+      } catch (err) {
+        alert('Netzwerkfehler beim Hochladen des Titelbildes.');
+        return;
+      }
+    }
 
     const newOrder = {
       title,
@@ -31,6 +54,7 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
       priority,
       status: 'pending',
       documents,
+      titleImage: titleImageUrl, // Hinzugefügt
       estimatedHours: 0,
       actualHours: 0,
       assignedTo: null,
@@ -41,7 +65,8 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
       orderType,
       // Initialisiere die neuen Felder als leere Arrays
       revisionHistory: [],
-      reworkComments: []
+      reworkComments: [],
+      noteHistory: [],
     };
 
     try {
@@ -60,6 +85,12 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
     } catch (err) {
       console.error('Network error:', err);
       alert('Netzwerkfehler beim Anlegen des Auftrags!');
+    }
+  };
+
+  const handleTitleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setTitleImage(e.target.files[0]);
     }
   };
 
@@ -302,6 +333,37 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
                 ))}
               </div>
             )}
+          </div>
+
+          <div className="md:col-span-2">
+            <label htmlFor="titleImage" className="block text-sm font-medium text-gray-700 mb-2">
+              Titelbild (optional)
+            </label>
+            <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
+              <div className="space-y-1 text-center">
+                {titleImage ? (
+                  <div>
+                    <img src={URL.createObjectURL(titleImage)} alt="Vorschau" className="mx-auto h-24 w-auto" />
+                    <p className="text-sm text-gray-500">{titleImage.name}</p>
+                    <button type="button" onClick={() => setTitleImage(null)} className="text-sm text-red-600 hover:text-red-800">
+                      Entfernen
+                    </button>
+                  </div>
+                ) : (
+                  <svg className="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                    <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+                <div className="flex text-sm text-gray-600">
+                  <label htmlFor="title-image-upload" className="relative cursor-pointer bg-white rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500">
+                    <span>{titleImage ? 'Anderes Bild' : 'Bild hochladen'}</span>
+                    <input id="title-image-upload" name="title-image-upload" type="file" className="sr-only" onChange={handleTitleImageChange} accept="image/*" />
+                  </label>
+                  <p className="pl-1">oder per Drag & Drop</p>
+                </div>
+                <p className="text-xs text-gray-500">PNG, JPG, GIF bis zu 10MB</p>
+              </div>
+            </div>
           </div>
 
           <div className="flex justify-between pt-6 border-t mt-6">

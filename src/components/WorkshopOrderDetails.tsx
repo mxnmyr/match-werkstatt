@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Check, 
@@ -38,24 +38,70 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   const [showRevisionDialog, setShowRevisionDialog] = useState(false);
   const [revisionComment, setRevisionComment] = useState('');
   const [revisionError, setRevisionError] = useState('');
+  const [titleImageUrl, setTitleImageUrl] = useState('');
+
+  // Zustand für bearbeitete Felder
+  const [changedFields, setChangedFields] = useState<Partial<Order>>({});
+
+  useEffect(() => {
+    if (localOrder.titleImage) {
+      // Append a timestamp to break browser cache when the image is updated
+      setTitleImageUrl(`/api/orders/${localOrder.id}/title-image?t=${new Date().getTime()}`);
+    } else {
+      setTitleImageUrl('');
+    }
+  }, [localOrder.titleImage, localOrder.id]);
+
+  // Wrapper, um Änderungen zu sammeln
+  const handleFieldChange = (field: keyof Order, value: any) => {
+    // Lokalen State für die UI direkt aktualisieren
+    const updateLocalState = () => {
+        switch (field) {
+            case 'assignedTo':
+                setAssignedTo(value);
+                break;
+            case 'estimatedHours':
+                setEstimatedHours(value.toString());
+                break;
+            case 'actualHours':
+                setActualHours(value.toString());
+                break;
+            case 'notes':
+                setNotes(value);
+                break;
+        }
+    };
+    updateLocalState();
+
+    // Änderungen für den nächsten Speicher-Vorgang sammeln
+    setChangedFields(prev => ({ ...prev, [field]: value }));
+  };
 
   // Hilfsfunktion für API-Update
-  const updateOrder = async (updatedOrder: Order, notificationMsg?: string, extraBody?: any) => {
+  const updateOrder = async (updatedFields: Partial<Order>, notificationMsg?: string) => {
+    // Verhindern, dass leere Updates gesendet werden
+    if (Object.keys(updatedFields).length === 0) {
+        if (notificationMsg) {
+            dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: notificationMsg, type: 'success' } });
+        }
+        return;
+    }
+
     try {
-      const response = await fetch(`/api/orders/${updatedOrder.id}`, {
+      const response = await fetch(`/api/orders/${localOrder.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...updatedOrder, ...extraBody })
+        body: JSON.stringify(updatedFields)
       });
       if (!response.ok) {
-        dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Fehler beim Speichern!', type: 'error' } });
+        const errorData = await response.json();
+        dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: `Fehler: ${errorData.error || 'Unbekannt'}`, type: 'error' } });
         return;
       }
-      // Nach erfolgreichem Update: Auftrag neu laden
-      const fresh = await fetch(`/api/orders`);
-      const allOrders = await fresh.json();
-      const freshOrder = allOrders.find((o: Order) => o.id === updatedOrder.id);
-      if (freshOrder) setLocalOrder(freshOrder);
+      const freshOrder = await response.json();
+      setLocalOrder(freshOrder);
+      setChangedFields({}); // Zurücksetzen nach erfolgreichem Speichern
+
       if (notificationMsg) {
         dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: notificationMsg, type: 'success' } });
       }
@@ -64,32 +110,41 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     }
   };
 
+  const handleSave = () => {
+    // Sicherstellen, dass die Stunden als Zahlen gesendet werden
+    const payload: Partial<Order> = {
+        ...changedFields,
+    };
+    if (changedFields.estimatedHours !== undefined) {
+        payload.estimatedHours = parseFloat(estimatedHours) || 0;
+    }
+    if (changedFields.actualHours !== undefined) {
+        payload.actualHours = parseFloat(actualHours) || 0;
+    }
+    updateOrder(payload, 'Änderungen gespeichert');
+  };
+
   const handleStatusChange = (newStatus: Order['status']) => {
     if (newStatus === 'revision') {
       setShowRevisionDialog(true);
       return;
     }
-    const updatedOrder = {
-      ...localOrder,
-      status: newStatus as Order['status'],
-      assignedTo: assignedTo || null,
-      estimatedHours: parseFloat(estimatedHours) || 0,
-      actualHours: parseFloat(actualHours) || 0,
-      notes,
-      documents: localOrder.documents || [], // Dokumente explizit mitübernehmen
-      updatedAt: new Date()
+    const updatedFields: Partial<Order> = {
+      ...changedFields,
+      status: newStatus,
     };
+
     let message = '';
     switch (newStatus) {
       case 'accepted': message = 'Auftrag wurde erfolgreich angenommen'; break;
       case 'in_progress': message = 'Auftrag wurde gestartet'; break;
       case 'completed':
-        updatedOrder.status = 'waiting_confirmation';
+        updatedFields.status = 'waiting_confirmation';
         message = 'Auftrag wartet auf Endabnahme durch den Kunden';
         break;
       default: message = 'Auftragsstatus wurde aktualisiert';
     }
-    updateOrder(updatedOrder, message);
+    updateOrder(updatedFields, message);
   };
 
   // Revision absenden
@@ -101,72 +156,63 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     setRevisionError('');
     setShowRevisionDialog(false);
     
-    try {
-      const requestBody = {
-        id: localOrder.id,
-        status: 'revision',
-        assignedTo: assignedTo || null,
-        estimatedHours: parseFloat(estimatedHours) || 0,
-        actualHours: parseFloat(actualHours) || 0,
-        notes,
-        documents: localOrder.documents || [], // Dokumente explizit mitübernehmen
-        canEdit: true,
-        revisionComment,
-        userId: state.currentUser?.id,
-        userName: state.currentUser?.name,
-        updatedAt: new Date()
-      };
-      
-      const response = await fetch(`/api/orders/${localOrder.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
-      });
-      
-      if (!response.ok) {
-        dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Fehler beim Speichern!', type: 'error' } });
-        return;
-      }
-      
-      // Nach erfolgreichem Update: Auftrag neu laden
-      const fresh = await fetch(`/api/orders`);
-      const allOrders = await fresh.json();
-      const freshOrder = allOrders.find((o: Order) => o.id === localOrder.id);
-      if (freshOrder) setLocalOrder(freshOrder);
-      
-      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Auftrag wurde zur Überarbeitung zurückgeschickt', type: 'success' } });
-    } catch (err) {
-      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Netzwerkfehler beim Speichern!', type: 'error' } });
-    }
+    const requestBody: Partial<Order> & { revisionComment: string; userId?: string; userName?: string } = {
+      ...changedFields,
+      status: 'revision',
+      canEdit: true,
+      revisionComment,
+      userId: state.currentUser?.id,
+      userName: state.currentUser?.name,
+    };
     
+    updateOrder(requestBody, 'Auftrag wurde zur Überarbeitung zurückgeschickt');
     setRevisionComment('');
   };
 
-  const handleArchive = async () => {
-    const updatedOrder = {
-      ...localOrder,
-      status: 'archived' as Order['status'],
-      updatedAt: new Date()
-    };
+  const handleTitleImageUpload = async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
     try {
-      const response = await fetch(`/api/orders/${order.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedOrder)
+      const response = await fetch(`/api/orders/${localOrder.id}/upload-title-image`, {
+        method: 'POST',
+        body: formData,
       });
+
       if (!response.ok) {
-        dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Fehler beim Archivieren!', type: 'error' } });
+        const errorData = await response.json();
+        dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: `Fehler: ${errorData.error || 'Unbekannt'}`, type: 'error' } });
         return;
       }
-      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Auftrag wurde archiviert', type: 'info' } });
-      // Nach dem Archivieren: Aufträge neu laden
-      const fresh = await fetch('/api/orders');
-      const allOrders = await fresh.json();
-      if (dispatch) dispatch({ type: 'LOAD_ORDERS', payload: allOrders });
-      onClose();
+
+      // Da das Bild jetzt über einen separaten Endpunkt geladen wird,
+      // müssen wir die URL im lokalen State "künstlich" erzeugen, um eine Neuanzeige zu triggern.
+      // Ein Zeitstempel sorgt für einen einzigartigen Wert.
+      const updatedOrderFromServer = await response.json();
+      setLocalOrder(updatedOrderFromServer);
+
+      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Titelbild erfolgreich aktualisiert.', type: 'success' } });
+
     } catch (err) {
-      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Netzwerkfehler beim Archivieren!', type: 'error' } });
+      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Netzwerkfehler beim Upload des Titelbildes.', type: 'error' } });
     }
+  };
+
+  const handleTitleImageInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      handleTitleImageUpload(e.target.files[0]);
+    }
+  };
+
+  const removeTitleImage = async () => {
+    // Create a payload with just the change
+    const payload = { titleImage: null };
+    updateOrder(payload, 'Titelbild entfernt.');
+  };
+
+  const handleArchive = async () => {
+    updateOrder({ status: 'archived' }, 'Auftrag wurde archiviert');
+    onClose();
   };
 
   const handleFileUpload = (files: FileList | null) => {
@@ -360,33 +406,69 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
         </div>
 
         <div className="p-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {/* Left Column */}
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Auftragsdetails</h3>
-                <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                  <div className="flex justify-between">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {/* Linke Spalte: Auftragsdetails */}
+            <div className="md:col-span-2 space-y-6">
+
+              {/* Titelbild Sektion */}
+              <div className="bg-white p-6 rounded-lg shadow-sm border">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">Titelbild</h3>
+                <div className="flex items-center gap-6">
+                  {titleImageUrl ? (
+                    <img src={titleImageUrl} alt="Titelbild" className="w-32 h-32 object-cover rounded-lg shadow-md" />
+                  ) : (
+                    <div className="w-32 h-32 bg-gray-200 rounded-lg flex items-center justify-center text-gray-500 text-center p-2">
+                      Kein Titelbild
+                    </div>
+                  )}
+                  <div className="flex flex-col gap-2">
+                    <label htmlFor="title-image-input" className="cursor-pointer bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm text-center">
+                      {titleImageUrl ? 'Bild ändern' : 'Bild hochladen'}
+                    </label>
+                    <input
+                      id="title-image-input"
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleTitleImageInputChange}
+                    />
+                    {titleImageUrl && (
+                      <button
+                        onClick={removeTitleImage}
+                        className="text-sm text-red-600 hover:text-red-800"
+                      >
+                        Entfernen
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Auftragsinformationen */}
+              <div className="bg-white p-6 rounded-lg shadow-sm border">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">Auftragsinformationen</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
                     <span className="text-sm text-gray-600">Status:</span>
-                    <span className={`px-2 py-1 text-xs rounded-full ${getStatusColor(localOrder.status)}`}>
+                    <span className={`block px-2 py-1 text-xs rounded-full ${getStatusColor(localOrder.status)}`}>
                       {getStatusText(localOrder.status)}
                     </span>
                   </div>
-                  <div className="flex justify-between">
+                  <div>
                     <span className="text-sm text-gray-600">Auftraggeber:</span>
                     <span className="text-sm font-medium text-gray-900">{localOrder.clientName}</span>
                   </div>
-                  <div className="flex justify-between">
+                  <div>
                     <span className="text-sm text-gray-600">Deadline:</span>
                     <span className="text-sm font-medium text-gray-900">
                       {new Date(localOrder.deadline).toLocaleDateString('de-DE')}
                     </span>
                   </div>
-                  <div className="flex justify-between">
+                  <div>
                     <span className="text-sm text-gray-600">Kostenstelle:</span>
                     <span className="text-sm font-medium text-gray-900">{localOrder.costCenter}</span>
                   </div>
-                  <div className="flex justify-between">
+                  <div>
                     <span className="text-sm text-gray-600">Priorität:</span>
                     <span className="text-sm font-medium text-gray-900">{localOrder.priority}</span>
                   </div>
@@ -470,7 +552,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                     </label>
                     <select
                       value={assignedTo}
-                      onChange={(e) => setAssignedTo(e.target.value)}
+                      onChange={(e) => handleFieldChange('assignedTo', e.target.value || null)}
                       disabled={!canModify && state.currentUser?.role !== 'admin'}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
                     >
@@ -491,7 +573,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                       <input
                         type="number"
                         value={estimatedHours}
-                        onChange={(e) => setEstimatedHours(e.target.value)}
+                        onChange={(e) => handleFieldChange('estimatedHours', e.target.value)}
                         disabled={!canModify && state.currentUser?.role !== 'admin'}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
                         min="0"
@@ -505,7 +587,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                       <input
                         type="number"
                         value={actualHours}
-                        onChange={(e) => setActualHours(e.target.value)}
+                        onChange={(e) => handleFieldChange('actualHours', e.target.value)}
                         disabled={!canModify && state.currentUser?.role !== 'admin'}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
                         min="0"
@@ -520,13 +602,21 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                     </label>
                     <textarea
                       value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
+                      onChange={(e) => handleFieldChange('notes', e.target.value)}
                       disabled={!canModify && state.currentUser?.role !== 'admin'}
                       rows={4}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
                       placeholder="Notizen und Kommentare..."
                     />
                   </div>
+
+                  <button
+                    onClick={handleSave}
+                    disabled={Object.keys(changedFields).length === 0}
+                    className="w-full mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  >
+                    Änderungen speichern
+                  </button>
 
                   {/* Notiz-Historie */}
                   {localOrder.noteHistory && localOrder.noteHistory.length > 0 && (

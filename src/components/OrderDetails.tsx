@@ -20,6 +20,16 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
   const [confirmationNote, setConfirmationNote] = useState('');
   const [revisionDescription, setRevisionDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [titleImageUrl, setTitleImageUrl] = useState('');
+
+  useEffect(() => {
+    if (currentOrder.titleImage) {
+      // Hänge einen Zeitstempel an, um den Browser-Cache zu umgehen
+      setTitleImageUrl(`/api/orders/${currentOrder.id}/title-image?t=${new Date().getTime()}`);
+    } else {
+      setTitleImageUrl('');
+    }
+  }, [currentOrder.titleImage, currentOrder.id]);
 
   useEffect(() => {
     // WebSocket verbinden und auf Events hören
@@ -208,53 +218,68 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="bg-white rounded-lg shadow-sm border">
-        <div className="flex justify-between items-center p-6 border-b">
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900">{currentOrder.title}</h2>
-            <p className="text-gray-600 mt-1">Auftrags-Nr.: {currentOrder.id}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              <X className="w-6 h-6" />
-            </button>
-          </div>
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex justify-between items-center p-6 border-b bg-gray-50 rounded-t-lg">
+          <h2 className="text-2xl font-bold text-gray-800 truncate" title={currentOrder.title}>{currentOrder.title}</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <X className="w-6 h-6" />
+          </button>
         </div>
 
-        <div className="p-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Auftragsdetails</h3>
-                <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-gray-600">Status:</span>
-                    <span className={`px-2 py-1 text-xs rounded-full ${getStatusColor(currentOrder.status)}`}>
+        <div className="p-8 overflow-y-auto flex-grow">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {/* Linke Spalte: Auftragsdetails */}
+            <div className="md:col-span-2 space-y-6">
+
+              {/* Titelbild (falls vorhanden) */}
+              {titleImageUrl && (
+                <div className="bg-white p-6 rounded-lg shadow-sm border">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4">Titelbild</h3>
+                  <img 
+                    src={titleImageUrl}
+                    alt="Titelbild des Auftrags"
+                    className="w-full h-auto max-h-96 object-contain rounded-lg shadow-md"
+                  />
+                </div>
+              )}
+
+              {/* Auftragsinformationen */}
+              <div className="bg-white p-6 rounded-lg shadow-sm border">
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">Auftragsinformationen</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <span className="text-sm text-gray-600">Auftrags-Nr.</span>
+                    <h4 className="text-xl font-bold text-gray-900">{currentOrder.id}</h4>
+                  </div>
+                  <div>
+                    <span className="text-sm text-gray-600">Status</span>
+                    <span className={`px-3 py-1 text-xs rounded-full ${getStatusColor(currentOrder.status)}`}>
                       {getStatusText(currentOrder.status)}
                     </span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm text-gray-600">Erstellt am:</span>
-                    <span className="text-sm font-medium text-gray-900">
+                  <div>
+                    <span className="text-sm text-gray-600">Erstellt am</span>
+                    <p className="text-sm font-medium text-gray-900">
                       {new Date(currentOrder.createdAt).toLocaleDateString('de-DE')}
-                    </span>
+                    </p>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm text-gray-600">Deadline:</span>
-                    <span className="text-sm font-medium text-gray-900">
+                  <div>
+                    <span className="text-sm text-gray-600">Deadline</span>
+                    <p className="text-sm font-medium text-gray-900">
                       {new Date(currentOrder.deadline).toLocaleDateString('de-DE')}
-                    </span>
+                    </p>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm text-gray-600">Kostenstelle:</span>
-                    <span className="text-sm font-medium text-gray-900">{currentOrder.costCenter}</span>
+                  <div>
+                    <span className="text-sm text-gray-600">Kostenstelle</span>
+                    <p className="text-sm font-medium text-gray-900">{currentOrder.costCenter}</p>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-sm text-gray-600">Priorität:</span>
-                    <span className="text-sm font-medium text-gray-900 capitalize">{currentOrder.priority}</span>
+                  <div>
+                    <span className="text-sm text-gray-600">Priorität</span>
+                    <p className="text-sm font-medium text-gray-900 capitalize">{currentOrder.priority}</p>
                   </div>
                 </div>
               </div>
@@ -264,57 +289,35 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                 <p className="text-gray-700 bg-gray-50 rounded-lg p-4">{currentOrder.description}</p>
               </div>
 
-              {/* Revision History */}
-              {currentOrder.revisionHistory && Array.isArray(currentOrder.revisionHistory) && currentOrder.revisionHistory.length > 0 && (
-                <div>
-                  <h4 className="text-md font-semibold text-gray-900 mb-2">Nacharbeits-Kommentare</h4>
-                  <div className="space-y-3 bg-orange-50 rounded-lg p-4 border border-orange-200">
-                    {currentOrder.revisionHistory.map((entry: any, index: number) => (
-                      <div key={index} className="p-3 bg-white rounded-md shadow-sm">
-                        <p className="text-sm text-gray-800 whitespace-pre-wrap">{entry.comment}</p>
-                        <p className="text-xs text-gray-500 mt-2">
-                          <strong>{entry.userName}</strong> am {new Date(entry.createdAt).toLocaleString('de-DE')}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {/* Kombinierter und sortierter Kommentarverlauf */}
+              {(() => {
+                const combinedComments = [
+                  ...(currentOrder.revisionHistory || []),
+                  ...(currentOrder.reworkComments || [])
+                ].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
-              {/* Revision History (Werkstatt-Kommentare) */}
-              {currentOrder.revisionHistory && Array.isArray(currentOrder.revisionHistory) && currentOrder.revisionHistory.length > 0 && (
-                <div>
-                  <h4 className="text-md font-semibold text-gray-900 mb-2">Werkstatt-Kommentare</h4>
-                  <div className="space-y-3 bg-orange-50 rounded-lg p-4 border border-orange-200">
-                    {currentOrder.revisionHistory.map((entry: any, index: number) => (
-                      <div key={index} className="p-3 bg-white rounded-md shadow-sm">
-                        <p className="text-sm text-gray-800 whitespace-pre-wrap">{entry.comment}</p>
-                        <p className="text-xs text-gray-500 mt-2">
-                          <strong>{entry.userName}</strong> am {new Date(entry.createdAt).toLocaleString('de-DE')}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                if (combinedComments.length === 0) {
+                  return null;
+                }
 
-              {/* Rework Comments (Kunden-Kommentare) */}
-              {currentOrder.reworkComments && Array.isArray(currentOrder.reworkComments) && currentOrder.reworkComments.length > 0 && (
-                <div>
-                  <h4 className="text-md font-semibold text-gray-900 mb-2">Kunden-Kommentare zur Nacharbeit</h4>
-                  <div className="space-y-3 bg-blue-50 rounded-lg p-4 border border-blue-200">
-                    {currentOrder.reworkComments.map((entry: any, index: number) => (
-                      <div key={index} className="p-3 bg-white rounded-md shadow-sm">
-                        <p className="text-sm text-gray-800 whitespace-pre-wrap">{entry.comment}</p>
-                        <p className="text-xs text-gray-500 mt-2">
-                          <strong>{entry.userName}</strong> am {new Date(entry.createdAt).toLocaleString('de-DE')}
-                        </p>
-                      </div>
-                    ))}
+                return (
+                  <div>
+                    <h4 className="text-md font-semibold text-gray-900 mb-2">Kommentarverlauf</h4>
+                    <div className="space-y-4 bg-gray-50 rounded-lg p-4 border border-gray-200">
+                      {combinedComments.map((entry: any, index: number) => (
+                        <div 
+                          key={index} 
+                          className={`p-3 rounded-md shadow-sm ${entry.userName === 'Werkstatt' ? 'bg-orange-50 border-l-4 border-orange-300' : 'bg-blue-50 border-r-4 border-blue-300'}`}>
+                          <p className="text-sm text-gray-800 whitespace-pre-wrap">{entry.comment}</p>
+                          <p className={`text-xs text-gray-500 mt-2 ${entry.userName === 'Werkstatt' ? 'text-left' : 'text-right'}`}>
+                            <strong>{entry.userName}</strong> am {new Date(entry.createdAt).toLocaleString('de-DE')}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
-
+                );
+              })()}
 
               <div>
                 <h4 className="text-md font-semibold text-gray-900 mb-2">Dokumente</h4>
@@ -446,21 +449,6 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                       </div>
                     </div>
                   )}
-                </div>
-              )}
-
-              {/* Nacharbeits-Kommentare Verlauf */}
-              {currentOrder.revisionHistory && currentOrder.revisionHistory.length > 0 && (
-                <div className="mt-6">
-                  <h4 className="text-md font-semibold text-gray-900 mb-2">Nacharbeits-Kommentare</h4>
-                  <div className="space-y-2">
-                    {currentOrder.revisionHistory.map((entry, idx) => (
-                      <div key={idx} className="bg-orange-50 border-l-4 border-orange-400 p-3 rounded">
-                        <div className="text-sm text-gray-800 mb-1">{entry.comment}</div>
-                        <div className="text-xs text-gray-500">{entry.userName} am {new Date(entry.createdAt).toLocaleString('de-DE')}</div>
-                      </div>
-                    ))}
-                  </div>
                 </div>
               )}
             </div>

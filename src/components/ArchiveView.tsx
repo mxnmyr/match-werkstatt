@@ -9,6 +9,14 @@ export default function ArchiveView({ onClose }: { onClose: () => void }) {
 
   const archivedOrders = state.orders.filter(order => order.status === 'archived');
 
+  const getTitleImageUrl = (order: Order) => {
+    if (order.titleImage) { // Prüft, ob das Feld existiert (nach DB-Migration)
+      // Hänge einen Zeitstempel an, um Caching zu umgehen, falls das Bild aktualisiert wird
+      return `/api/orders/${order.id}/title-image?t=${new Date(order.updatedAt).getTime()}`;
+    }
+    return undefined; // Kein Bild vorhanden
+  };
+
   const handleRestore = (order: Order) => {
     dispatch({ type: 'UPDATE_ORDER', payload: { ...order, status: 'revision' } });
     dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Auftrag zur Nachbearbeitung freigegeben', type: 'info' } });
@@ -28,18 +36,26 @@ export default function ArchiveView({ onClose }: { onClose: () => void }) {
         <p className="text-gray-500">Keine archivierten Aufträge vorhanden.</p>
       ) : (
         <div className="space-y-4">
-          {archivedOrders.map(order => (
-            <div key={order.id} className="bg-white rounded-lg shadow-sm border p-4 flex justify-between items-center">
-              <div>
-                <div className="font-semibold text-lg">{order.title}</div>
-                <div className="text-sm text-gray-500">#{order.id.slice(-8)}</div>
+          {archivedOrders.map(order => {
+            const imageUrl = getTitleImageUrl(order);
+            return (
+              <div key={order.id} className="bg-white rounded-lg shadow-sm border p-4 flex justify-between items-center">
+                <div className="flex items-center gap-4">
+                  {imageUrl && (
+                    <img src={imageUrl} alt={order.title} className="w-20 h-20 object-cover rounded-md" />
+                  )}
+                  <div>
+                    <div className="font-semibold text-lg">{order.title}</div>
+                    <div className="text-sm text-gray-500">#{order.id.slice(-8)}</div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setSelectedOrder(order)} className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Details</button>
+                  <button onClick={() => handleRestore(order)} className="px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600">Nacharbeiten</button>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <button onClick={() => setSelectedOrder(order)} className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Details</button>
-                <button onClick={() => handleRestore(order)} className="px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600">Nacharbeiten</button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

@@ -12,7 +12,8 @@ const PORT = 3001;
 const prisma = new PrismaClient();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 const uploadsDir = path.join(__dirname, 'storage', 'uploads');
 
@@ -115,6 +116,7 @@ app.get('/api/orders', async (req, res) => {
             createdAt: 'desc',
           },
         },
+        titleImage: true, // Include the related image model
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -163,6 +165,7 @@ app.post('/api/orders', async (req, res) => {
         subTasks: orderData.subTasks || [],
         revisionHistory: orderData.revisionHistory || [],
         reworkComments: orderData.reworkComments || [],
+        // titleImage has been removed, will be handled by separate upload
         createdAt: new Date(),
         updatedAt: new Date(),
         documents: {
@@ -207,7 +210,8 @@ app.put('/api/orders/:id', async (req, res) => {
       revisionRequest, // Vom Kunden für Nacharbeit
       revisionComment, // Von Werkstatt für Überarbeitung
       userId,          
-      userName         
+      userName
+      // titleImage is no longer updated directly here
     } = req.body;
 
     console.log('=== EXTRACTED FIELDS ===');
@@ -268,7 +272,7 @@ app.put('/api/orders/:id', async (req, res) => {
         userId: effectiveUserId,
         userName: effectiveUserName,
         documents: [], // Dokumente werden jetzt separat gehandhabt
-        requestedAt: new Date().toISOString()
+        createdAt: new Date().toISOString() // Geändert von requestedAt
       });
     }
 
@@ -291,6 +295,23 @@ app.put('/api/orders/:id', async (req, res) => {
       reworkComments,  // Verlauf Kunde -> Werkstatt
       updatedAt: new Date()
     };
+
+    // Sonderfall: Titelbild entfernen
+    if (req.body.titleImage === null) {
+      console.log('Fall 3: Titelbild wird entfernt...');
+      const existingOrder = await prisma.order.findUnique({ 
+        where: { id: req.params.id }, 
+        select: { titleImageId: true } 
+      });
+      if (existingOrder && existingOrder.titleImageId) {
+        // The onDelete: Cascade in the schema should handle the deletion,
+        // but we explicitly set the link to null.
+        updateData.titleImageId = null; 
+        // The actual image deletion from the Image table is handled by the cascade.
+      }
+    }
+
+
     // Entferne undefined Werte
     Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
     console.log('PUT /api/orders/:id updateData:', updateData);
@@ -307,6 +328,7 @@ app.put('/api/orders/:id', async (req, res) => {
             createdAt: 'desc',
           },
         },
+        titleImage: true,
       },
     });
     // WebSocket-Broadcast für sofortiges Update
@@ -318,6 +340,7 @@ app.put('/api/orders/:id', async (req, res) => {
             createdAt: 'desc',
           },
         },
+        titleImage: true,
       },
     });
     broadcast('ordersUpdated', allOrders);
@@ -332,6 +355,9 @@ app.delete('/api/orders/:id', async (req, res) => {
   try {
     // Erst Dokumente löschen (wegen Foreign Key)
     await prisma.document.deleteMany({ where: { orderId: req.params.id } });
+    
+    // Das verbundene Bild wird dank "onDelete: Cascade" im Schema automatisch mitgelöscht.
+    
     await prisma.order.delete({ where: { id: req.params.id } });
     res.json({ success: true });
   } catch (err) {
@@ -362,12 +388,107 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+// Multer-Konfiguration für In-Memory-Speicherung (für DB-Upload)
+const memoryUpload = multer({ storage: multer.memoryStorage() });
+
 app.post('/api/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'Keine Datei empfangen!' });
   }
   // Metadaten werden erst beim Auftrag angelegt, daher hier nur Dateiname zurückgeben
   res.json({ filename: req.file.filename, originalname: req.file.originalname });
+});
+
+// Endpunkt für Titelbild-Upload in die DB (neue Logik mit Image-Tabelle)
+app.post('/api/orders/:id/upload-title-image', memoryUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Keine Datei hochgeladen.' });
+    }
+
+    const orderId = req.params.id;
+    const imageBuffer = req.file.buffer;
+    const mimeType = req.file.mimetype;
+
+    // 1. Finde den Auftrag und prüfe, ob bereits ein Bild existiert
+    const existingOrder = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { titleImageId: true }
+    });
+
+    if (!existingOrder) {
+      return res.status(404).json({ error: 'Auftrag nicht gefunden.' });
+    }
+
+    // 2. Wenn ein altes Bild existiert, lösche es.
+    // Die Kaskadierung sollte das beim Ersetzen des Links eigentlich tun, aber zur Sicherheit...
+    if (existingOrder.titleImageId) {
+      await prisma.image.delete({ where: { id: existingOrder.titleImageId }});
+    }
+
+    // 3. Erstelle den neuen Bildeintrag
+    const newImage = await prisma.image.create({
+      data: {
+        mimeType: mimeType,
+        data: imageBuffer,
+      }
+    });
+
+    // 4. Verknüpfe das neue Bild mit dem Auftrag
+    const updatedOrder = await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        titleImageId: newImage.id
+      },
+      include: { 
+        documents: true,
+        noteHistory: true,
+        titleImage: true
+       },
+    });
+
+    // WebSocket-Broadcast für sofortiges Update
+    const allOrders = await prisma.order.findMany({
+      include: {
+        documents: true,
+        noteHistory: {
+          orderBy: {
+            createdAt: 'desc',
+          },
+        },
+        titleImage: true,
+      },
+    });
+    broadcast('ordersUpdated', allOrders);
+
+    // Nur die notwendigen Daten zurücksenden, nicht das ganze Bild
+    const { titleImage, ...orderWithoutImage } = updatedOrder;
+    res.json({ ...orderWithoutImage, titleImage: { id: updatedOrder.titleImage.id } }); // Nur die ID zurückgeben
+
+  } catch (err) {
+    console.error('Error uploading title image:', err);
+    res.status(500).json({ error: 'Fehler beim Hochladen des Titelbildes.', details: err.message });
+  }
+});
+
+// Endpunkt zum Abrufen des Titelbildes (neue Logik mit Image-Tabelle)
+app.get('/api/orders/:id/title-image', async (req, res) => {
+  try {
+    const order = await prisma.order.findUnique({
+      where: { id: req.params.id },
+      include: { titleImage: true },
+    });
+
+    if (!order || !order.titleImage) {
+      return res.status(404).send('Bild nicht gefunden');
+    }
+
+    res.setHeader('Content-Type', order.titleImage.mimeType || 'application/octet-stream');
+    res.send(order.titleImage.data);
+  } catch (err) {
+    console.error('Error fetching title image:', err);
+    res.status(500).json({ error: 'Fehler beim Abrufen des Bildes.' });
+  }
 });
 
 app.use('/uploads', express.static(uploadsDir));

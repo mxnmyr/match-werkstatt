@@ -26,13 +26,18 @@ export interface ReworkComment {
   userId: string;
   userName: string;
   documents: PDFDocument[];
-  requestedAt: string;
+  createdAt: string; // War vorher requestedAt
 }
 
 export interface NoteHistory {
   id: string;
   notes: string;
   createdAt: string; // ISO-String
+}
+
+export interface Image {
+  id: string;
+  mimeType: string;
 }
 
 export interface Order {
@@ -66,6 +71,8 @@ export interface Order {
   revisionHistory: RevisionComment[];
   reworkComments: ReworkComment[];
   noteHistory: NoteHistory[];
+  titleImage?: Image | null; 
+  titleImageId?: string | null;
 }
 
 export interface SubTask {
