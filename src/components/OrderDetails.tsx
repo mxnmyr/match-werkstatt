@@ -47,7 +47,8 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
     console.log('OrderDetails: currentUser', state.currentUser);
     console.log('OrderDetails: currentOrder.status', currentOrder.status);
     console.log('OrderDetails: currentOrder', currentOrder);
-  }, [state.currentUser, currentOrder.status]);
+    console.log('OrderDetails: currentOrder.reworkComments', currentOrder.reworkComments);
+  }, [state.currentUser, currentOrder.status, currentOrder]);
 
   // Zeige eine Warnung, wenn kein User im State ist
   useEffect(() => {
@@ -151,6 +152,17 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
         body: JSON.stringify(updatedOrder),
       });
       if (!response.ok) throw new Error('Fehler beim Bestätigen');
+      
+      // Den aktualisierten Auftrag aus der Response holen und den Context aktualisieren
+      const updatedOrderFromResponse = await response.json();
+      console.log('=== FRONTEND: Updated Order received (Confirmation) ===');
+      
+      // Context mit dem aktualisierten Auftrag updaten
+      dispatch({ 
+        type: 'UPDATE_ORDER', 
+        payload: updatedOrderFromResponse 
+      });
+      
       setShowConfirmModal(false);
       setConfirmationNote('');
       dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Auftrag bestätigt!', type: 'success' } });
@@ -202,6 +214,20 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
         body: JSON.stringify(requestBody),
       });
       if (!response.ok) throw new Error('Fehler bei Nacharbeitsanfrage');
+      
+      // Den aktualisierten Auftrag aus der Response holen und den Context aktualisieren
+      const updatedOrder = await response.json();
+      console.log('=== FRONTEND: Updated Order received ===');
+      console.log('reworkComments in response:', updatedOrder.reworkComments);
+      console.log('About to dispatch UPDATE_ORDER with payload:', updatedOrder);
+      
+      // Context mit dem aktualisierten Auftrag updaten
+      dispatch({ 
+        type: 'UPDATE_ORDER', 
+        payload: updatedOrder 
+      });
+      console.log('=== FRONTEND: UPDATE_ORDER dispatched ===');
+      
       setShowRevisionModal(false);
       setRevisionDescription('');
       dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Nacharbeit angefordert!', type: 'success' } });

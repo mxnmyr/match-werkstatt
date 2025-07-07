@@ -45,6 +45,16 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   // Zustand für bearbeitete Felder
   const [changedFields, setChangedFields] = useState<Partial<Order>>({});
 
+  // localOrder aktualisieren, wenn sich der Order im Context ändert
+  useEffect(() => {
+    const updatedOrder = state.orders.find(o => o.id === order.id);
+    if (updatedOrder) {
+      console.log('WorkshopOrderDetails: Updating localOrder from context');
+      console.log('Current reworkComments:', updatedOrder.reworkComments);
+      setLocalOrder(updatedOrder);
+    }
+  }, [state.orders, order.id]);
+
   useEffect(() => {
     if (localOrder.titleImage) {
       // Append a timestamp to break browser cache when the image is updated

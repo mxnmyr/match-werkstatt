@@ -269,6 +269,9 @@ app.post('/api/orders', async (req, res) => {
 
 app.put('/api/orders/:id', async (req, res) => {
   try {
+    const { MongoClient, ObjectId } = require('mongodb');
+    const mongoClient = new MongoClient('mongodb://localhost:27017');
+    
     console.log('=== PUT /api/orders/:id RECEIVED ===');
     console.log('Order ID:', req.params.id);
     console.log('Request Body:', JSON.stringify(req.body, null, 2));
@@ -298,158 +301,128 @@ app.put('/api/orders/:id', async (req, res) => {
       materialOrderedByWorkshop,
       materialOrderedByClient,
       materialOrderedByClientConfirmed,
-      materialAvailable
-      // titleImage is no longer updated directly here
+      materialAvailable,
+      // Zusätzliche Felder
+      confirmationNote,
+      confirmationDate,
+      canEdit
     } = req.body;
 
-    console.log('=== EXTRACTED FIELDS ===');
-    console.log('status:', status);
-    console.log('revisionRequest:', revisionRequest);
-    console.log('userId:', userId);
-    console.log('userName:', userName);
-    console.log('========================');
-
-    // Hole bisherigen Verlauf
-    const existingOrder = await prisma.order.findUnique({ where: { id: req.params.id } });
-    if (!existingOrder) {
-      return res.status(404).json({ error: 'Auftrag nicht gefunden' });
-    }
-    let revisionHistory = Array.isArray(existingOrder.revisionHistory) ? existingOrder.revisionHistory : [];
-    let reworkComments = Array.isArray(existingOrder.reworkComments) ? existingOrder.reworkComments : [];
-
-    // Wenn Notizen geändert wurden, alten Stand historisieren
-    if (notes !== undefined && notes !== existingOrder.notes) {
-      await prisma.noteHistory.create({
-        data: {
-          orderId: req.params.id,
-          notes: existingOrder.notes || '',
-          createdAt: new Date(),
-        },
-      });
-    }
-
-    // Fallback: userId/userName ggf. aus revisionRequest holen, falls auf Top-Level nicht vorhanden
-    let effectiveUserId = userId;
-    let effectiveUserName = userName;
-    // Das revisionRequest-Objekt wird nicht mehr verwendet, der Fallback ist nicht mehr nötig.
-    // if ((!effectiveUserId || !effectiveUserName) && revisionRequest) {
-    //   if (revisionRequest.userId && revisionRequest.userName) {
-    //     effectiveUserId = revisionRequest.userId;
-    //     effectiveUserName = revisionRequest.userName;
-    //     console.log('Fallback: userId/userName aus revisionRequest entnommen');
-    //   }
-    // }
-
-    // Fall 1: Werkstatt schickt Auftrag zur "Überarbeitung" an den Kunden
-    if (status === 'revision' && revisionComment && effectiveUserId && effectiveUserName) {
-      console.log('Fall 1: Werkstatt-Überarbeitung wird verarbeitet...');
-      revisionHistory.push({
-        comment: revisionComment,
-        userId: effectiveUserId,
-        userName: effectiveUserName,
-        createdAt: new Date().toISOString()
-      });
-    }
-
-    // Fall 2: Kunde schickt Auftrag zur "Nacharbeit" an die Werkstatt
-    // Logik korrigiert: Prüft jetzt auf `revisionComment` statt `revisionRequest`
-    if (status === 'rework' && revisionComment && effectiveUserId && effectiveUserName) {
-      console.log('Fall 2: Kunden-Nacharbeit wird verarbeitet...');
-      reworkComments.push({
-        comment: revisionComment, // Korrigiert: `revisionComment` direkt verwenden
-        userId: effectiveUserId,
-        userName: effectiveUserName,
-        documents: [], // Dokumente werden jetzt separat gehandhabt
-        createdAt: new Date().toISOString() // Geändert von requestedAt
-      });
-    }
-
-    const updateData = {
-      title,
-      description,
-      clientId,
-      clientName,
-      deadline: deadline ? new Date(deadline) : undefined,
-      costCenter,
-      priority,
-      status,
-      estimatedHours,
-      actualHours,
-      assignedTo,
-      notes,
-      orderType,
-      subTasks: subTasks || [],
-      revisionHistory, // Verlauf Werkstatt -> Kunde
-      reworkComments,  // Verlauf Kunde -> Werkstatt
-      // Materialstatus-Felder
-      materialOrderedByWorkshop,
-      materialOrderedByClient,
-      materialOrderedByClientConfirmed,
-      materialAvailable,
-      updatedAt: new Date()
-    };
-
-    // Sonderfall: Titelbild entfernen
-    if (req.body.titleImage === null) {
-      console.log('Fall 3: Titelbild wird entfernt...');
-      const existingOrder = await prisma.order.findUnique({ 
-        where: { id: req.params.id }, 
-        select: { titleImageId: true } 
-      });
-      if (existingOrder && existingOrder.titleImageId) {
-        // The onDelete: Cascade in the schema should handle the deletion,
-        // but we explicitly set the link to null.
-        updateData.titleImageId = null; 
-        // The actual image deletion from the Image table is handled by the cascade.
-      }
-    }
-
-
-    // Entferne undefined Werte
-    Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
-    console.log('PUT /api/orders/:id updateData:', updateData);
+    await mongoClient.connect();
+    const db = mongoClient.db('matchdb');
+    const collection = db.collection('Order');
     
-    // Dokumente werden durch das include automatisch mitgeladen, 
-    // sie müssen nicht explizit im updateData stehen da sie eine separate Tabelle sind
-    const order = await prisma.order.update({
-      where: { id: req.params.id },
-      data: updateData,
-      include: {
-        documents: true,
-        components: {
-          include: {
-            documents: true
-          }
-        },
-        noteHistory: {
-          orderBy: {
-            createdAt: 'desc',
+    try {
+      // Hole bisherigen Auftrag
+      const existingOrder = await collection.findOne({ _id: new ObjectId(req.params.id) });
+      if (!existingOrder) {
+        return res.status(404).json({ error: 'Auftrag nicht gefunden' });
+      }
+
+      let revisionHistory = Array.isArray(existingOrder.revisionHistory) ? existingOrder.revisionHistory : [];
+      let reworkComments = Array.isArray(existingOrder.reworkComments) ? existingOrder.reworkComments : [];
+
+      // Wenn Notizen geändert wurden, alten Stand historisieren
+      if (notes !== undefined && notes !== existingOrder.notes) {
+        const noteHistoryCollection = db.collection('NoteHistory');
+        await noteHistoryCollection.insertOne({
+          orderId: new ObjectId(req.params.id),
+          notes: existingOrder.notes || '',
+          createdAt: new Date()
+        });
+      }
+
+      // Fallback: userId/userName ggf. aus revisionRequest holen
+      let effectiveUserId = userId;
+      let effectiveUserName = userName;
+
+      // Fall 1: Werkstatt schickt Auftrag zur "Überarbeitung" an den Kunden
+      if (status === 'revision' && revisionComment && effectiveUserId && effectiveUserName) {
+        console.log('Fall 1: Werkstatt-Überarbeitung wird verarbeitet...');
+        revisionHistory.push({
+          comment: revisionComment,
+          userId: effectiveUserId,
+          userName: effectiveUserName,
+          createdAt: new Date().toISOString()
+        });
+      }
+
+      // Fall 2: Kunde schickt Auftrag zur "Nacharbeit" an die Werkstatt
+      if (status === 'rework' && revisionComment && effectiveUserId && effectiveUserName) {
+        console.log('Fall 2: Kunden-Nacharbeit wird verarbeitet...');
+        reworkComments.push({
+          comment: revisionComment,
+          userId: effectiveUserId,
+          userName: effectiveUserName,
+          documents: [],
+          createdAt: new Date().toISOString()
+        });
+      }
+
+      const updateData = {
+        updatedAt: new Date()
+      };
+
+      // Nur definierte Felder hinzufügen
+      if (title !== undefined) updateData.title = title;
+      if (description !== undefined) updateData.description = description;
+      if (clientId !== undefined) updateData.clientId = clientId;
+      if (clientName !== undefined) updateData.clientName = clientName;
+      if (deadline !== undefined) updateData.deadline = new Date(deadline);
+      if (costCenter !== undefined) updateData.costCenter = costCenter;
+      if (priority !== undefined) updateData.priority = priority;
+      if (status !== undefined) updateData.status = status;
+      if (estimatedHours !== undefined) updateData.estimatedHours = estimatedHours;
+      if (actualHours !== undefined) updateData.actualHours = actualHours;
+      if (assignedTo !== undefined) updateData.assignedTo = assignedTo;
+      if (notes !== undefined) updateData.notes = notes;
+      if (orderType !== undefined) updateData.orderType = orderType;
+      if (subTasks !== undefined) updateData.subTasks = subTasks || [];
+      if (materialOrderedByWorkshop !== undefined) updateData.materialOrderedByWorkshop = materialOrderedByWorkshop;
+      if (materialOrderedByClient !== undefined) updateData.materialOrderedByClient = materialOrderedByClient;
+      if (materialOrderedByClientConfirmed !== undefined) updateData.materialOrderedByClientConfirmed = materialOrderedByClientConfirmed;
+      if (materialAvailable !== undefined) updateData.materialAvailable = materialAvailable;
+      if (confirmationNote !== undefined) updateData.confirmationNote = confirmationNote;
+      if (confirmationDate !== undefined) updateData.confirmationDate = new Date(confirmationDate);
+      if (canEdit !== undefined) updateData.canEdit = canEdit;
+      
+      // Geschichte immer aktualisieren
+      updateData.revisionHistory = revisionHistory;
+      updateData.reworkComments = reworkComments;
+
+      console.log('PUT /api/orders/:id updateData:', updateData);
+      
+      // Update in MongoDB
+      await collection.updateOne(
+        { _id: new ObjectId(req.params.id) },
+        { $set: updateData }
+      );
+
+      // Hole den aktualisierten Auftrag mit Prisma zurück (für die Relations)
+      const order = await prisma.order.findUnique({
+        where: { id: req.params.id },
+        include: {
+          documents: true,
+          components: {
+            include: {
+              documents: true
+            }
           },
-        },
-        titleImage: true,
-      },
-    });
-    // WebSocket-Broadcast für sofortiges Update
-    const allOrders = await prisma.order.findMany({
-      include: {
-        documents: true,
-        components: {
-          include: {
-            documents: true
-          }
-        },
-        noteHistory: {
-          orderBy: {
-            createdAt: 'desc',
+          noteHistory: {
+            orderBy: {
+              createdAt: 'desc',
+            },
           },
+          titleImage: true,
         },
-        titleImage: true,
-      },
-    });
-    broadcast('ordersUpdated', allOrders);
-    res.json(order);
+      });
+
+      res.json(order);
+    } finally {
+      await mongoClient.close();
+    }
   } catch (err) {
-    console.error('PUT /api/orders/:id ERROR:', err);
+    console.error('PUT /api/orders/:id error:', err);
     res.status(500).json({ error: 'Fehler beim Aktualisieren des Auftrags', details: err.message });
   }
 });

@@ -20,12 +20,17 @@ export default function ClientDashboard() {
     const data = await res.json();
     setOrders(data);
     // Optional: globalen State aktualisieren
-    if (dispatch) dispatch({ type: 'SET_ORDERS', payload: data });
+    if (dispatch) dispatch({ type: 'LOAD_ORDERS', payload: data });
   };
 
   useEffect(() => {
     setOrders(state.orders);
   }, [state.orders]);
+
+  // Initial orders laden
+  useEffect(() => {
+    fetchOrders();
+  }, []); // Nur einmal beim Mount
 
   const userOrders = orders.filter(order => 
     order.clientId === state.currentUser?.id && order.status !== 'archived'
@@ -70,7 +75,7 @@ export default function ClientDashboard() {
   }
 
   if (selectedOrder) {
-    return <OrderDetails order={selectedOrder} onClose={() => setSelectedOrder(null)} />;
+    return <OrderDetails order={selectedOrder} onClose={() => { setSelectedOrder(null); fetchOrders(); }} />;
   }
 
   return (
