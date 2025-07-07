@@ -16,7 +16,7 @@ export default function ClientDashboard() {
 
   // Orders nach jedem Öffnen/Schließen des Modals neu laden
   const fetchOrders = async () => {
-    const res = await fetch('/api/orders');
+    const res = await fetch('http://localhost:3001/api/orders');
     const data = await res.json();
     setOrders(data);
     // Optional: globalen State aktualisieren
@@ -218,7 +218,7 @@ export default function ClientDashboard() {
                 <EndabnahmeActions
                   onConfirm={async (note) => {
                     const updatedOrder = { ...order, status: 'completed', confirmationNote: note || '', confirmationDate: new Date() };
-                    await fetch(`/api/orders/${order.id}`, {
+                    await fetch(`http://localhost:3001/api/orders/${order.id}`, {
                       method: 'PUT',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify(updatedOrder)
@@ -242,7 +242,7 @@ export default function ClientDashboard() {
                         requestedAt: new Date()
                       }
                     };
-                    await fetch(`/api/orders/${order.id}`, {
+                    await fetch(`http://localhost:3001/api/orders/${order.id}`, {
                       method: 'PUT',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify(updatedOrder)

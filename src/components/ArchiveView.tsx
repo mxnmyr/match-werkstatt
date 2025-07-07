@@ -12,7 +12,7 @@ export default function ArchiveView({ onClose }: { onClose: () => void }) {
   const getTitleImageUrl = (order: Order) => {
     if (order.titleImage) { // Prüft, ob das Feld existiert (nach DB-Migration)
       // Hänge einen Zeitstempel an, um Caching zu umgehen, falls das Bild aktualisiert wird
-      return `/api/orders/${order.id}/title-image?t=${new Date(order.updatedAt).getTime()}`;
+      return `http://localhost:3001/api/orders/${order.id}/title-image?t=${new Date(order.updatedAt).getTime()}`;
     }
     return undefined; // Kein Bild vorhanden
   };

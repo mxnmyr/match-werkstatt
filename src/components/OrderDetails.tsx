@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { X, Calendar, DollarSign, Clock, FileText, User, Download } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { X, FileText, Download } from 'lucide-react';
 import { Order } from '../types';
 import ws from '../utils/websocket';
 import { useApp } from '../context/AppContext';
@@ -25,7 +25,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
   useEffect(() => {
     if (currentOrder.titleImage) {
       // Hänge einen Zeitstempel an, um den Browser-Cache zu umgehen
-      setTitleImageUrl(`/api/orders/${currentOrder.id}/title-image?t=${new Date().getTime()}`);
+      setTitleImageUrl(`http://localhost:3001/api/orders/${currentOrder.id}/title-image?t=${new Date().getTime()}`);
     } else {
       setTitleImageUrl('');
     }
@@ -33,7 +33,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
 
   useEffect(() => {
     // WebSocket verbinden und auf Events hören
-    ws.connect(order.id, (data) => {
+    ws.connect(order.id, (_data) => {
       // Nach Event: Context wird aktualisiert, Komponente rendert neu
       // (optional: hier könnte man auch einen Backend-Reload triggern)
     });
@@ -85,34 +85,30 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
     }
   };
 
-  const handleDownload = async (doc: any) => {
-    if (doc.file) {
-      // Create download link for the actual file
-      const url = URL.createObjectURL(doc.file);
+  const handleDownload = (doc: any) => {
+    if (doc.url) {
       const a = document.createElement('a');
-      a.href = url;
+      a.href = doc.url.startsWith('/uploads/') ? `http://localhost:3001${doc.url}` : doc.url;
       a.download = doc.name;
+      a.target = '_blank';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } else if (doc.url) {
-      // Datei als Blob vom Server laden und dann herunterladen
-      try {
-        const response = await fetch(doc.url);
-        if (!response.ok) throw new Error('Download fehlgeschlagen');
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = doc.name;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      } catch (err) {
-        alert('Fehler beim Herunterladen der Datei!');
-      }
+    }
+  };
+
+  // Materialstatus aktualisieren (nur für Kunden-Checkbox)
+  const handleMaterialStatusUpdate = async (field: 'materialOrderedByClientConfirmed', value: boolean) => {
+    try {
+      const response = await fetch(`http://localhost:3001/api/orders/${currentOrder.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: value }),
+      });
+      if (!response.ok) throw new Error('Fehler beim Aktualisieren');
+      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Materialstatus aktualisiert!', type: 'success' } });
+    } catch (err) {
+      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Fehler beim Aktualisieren!', type: 'error' } });
     }
   };
 
@@ -124,7 +120,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
     }
     if (!window.confirm('Diesen Auftrag wirklich unwiderruflich löschen?')) return;
     try {
-      const response = await fetch(`/api/orders/${currentOrder.id}`, {
+      const response = await fetch(`http://localhost:3001/api/orders/${currentOrder.id}`, {
         method: 'DELETE',
       });
       if (!response.ok) {
@@ -149,7 +145,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
         updatedAt: new Date(),
       };
       console.log('PUT /api/orders/:id (Bestätigen):', updatedOrder);
-      const response = await fetch(`/api/orders/${currentOrder.id}`, {
+      const response = await fetch(`http://localhost:3001/api/orders/${currentOrder.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedOrder),
@@ -200,7 +196,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
       console.log('===============================================');
       
       console.log('PUT /api/orders/:id (Nacharbeit):', requestBody);
-      const response = await fetch(`/api/orders/${currentOrder.id}`, {
+      const response = await fetch(`http://localhost:3001/api/orders/${currentOrder.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
@@ -221,7 +217,10 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
       <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex justify-between items-center p-6 border-b bg-gray-50 rounded-t-lg">
-          <h2 className="text-2xl font-bold text-gray-800 truncate" title={currentOrder.title}>{currentOrder.title}</h2>
+          <div>
+            <h2 className="text-2xl font-bold text-gray-800 truncate" title={currentOrder.title}>{currentOrder.title}</h2>
+            <p className="text-gray-600 mt-1">Auftrags-Nr.: {currentOrder.orderNumber || currentOrder.id}</p>
+          </div>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600 transition-colors"
@@ -413,6 +412,52 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                     <span className="text-sm text-gray-600">Zugewiesen an:</span>
                     <span className="text-sm font-medium text-gray-900">
                       {currentOrder.assignedTo ? 'Werkstatt Personal' : 'Nicht zugewiesen'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Materialstatus Sektion für Kunden */}
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">📦 Materialstatus</h3>
+                <div className="bg-gray-50 rounded-lg p-4 space-y-3 border">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-700 flex items-center">
+                      🏭 Material von der Werkstatt bestellt
+                    </span>
+                    <span className={`px-2 py-1 text-xs rounded-full ${currentOrder.materialOrderedByWorkshop ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                      {currentOrder.materialOrderedByWorkshop ? 'Ja' : 'Nein'}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-700 flex items-center">
+                      👤 Material durch den Kunden bestellt
+                    </span>
+                    {/* Checkbox nur anzeigen, wenn Werkstatt diese Option aktiviert hat */}
+                    {currentOrder.materialOrderedByClient ? (
+                      <label className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={currentOrder.materialOrderedByClientConfirmed || false}
+                          onChange={(e) => handleMaterialStatusUpdate('materialOrderedByClientConfirmed', e.target.checked)}
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                        />
+                        <span className="ml-2 text-sm text-gray-700">Material bestellt</span>
+                      </label>
+                    ) : (
+                      <span className="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-800">
+                        Nicht erforderlich
+                      </span>
+                    )}
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-700 flex items-center">
+                      ✅ Material vorhanden
+                    </span>
+                    <span className={`px-2 py-1 text-xs rounded-full ${currentOrder.materialAvailable ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                      {currentOrder.materialAvailable ? 'Ja' : 'Nein'}
                     </span>
                   </div>
                 </div>

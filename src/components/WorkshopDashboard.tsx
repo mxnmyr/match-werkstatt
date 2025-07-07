@@ -20,7 +20,7 @@ export default function WorkshopDashboard() {
 
   // Orders nach jedem Öffnen/Schließen des Modals neu laden
   const fetchOrders = async () => {
-    const res = await fetch('/api/orders');
+    const res = await fetch('http://localhost:3001/api/orders');
     const data = await res.json();
     setOrders(data);
     if (dispatch) dispatch({ type: 'LOAD_ORDERS', payload: data });
@@ -329,7 +329,7 @@ export default function WorkshopDashboard() {
                     <tr key={`order-${order.id}`} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">{order.title}</div>
-                        <div className="text-xs text-gray-500 font-mono">{order.id}</div>
+                        <div className="text-xs text-gray-500 font-mono">{order.orderNumber || order.id}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-gray-900">{order.clientName}</div>
@@ -416,7 +416,7 @@ export default function WorkshopDashboard() {
                     <tr key={`order-${order.id}`} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">{order.title}</div>
-                        <div className="text-xs text-gray-500 font-mono">{order.id}</div>
+                        <div className="text-xs text-gray-500 font-mono">{order.orderNumber || order.id}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-gray-900">{order.clientName}</div>

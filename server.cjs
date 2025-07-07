@@ -133,67 +133,124 @@ app.get('/api/orders', async (req, res) => {
 
 app.post('/api/orders', async (req, res) => {
   try {
+    const { MongoClient, ObjectId } = require('mongodb');
     const { documents, components, ...orderData } = req.body;
-    // --- Auftragsnummer generieren ---
+    
+    // Verbesserte Auftragsnummer-Generierung: F-YYMM-X (Jahr-Monat-Laufende Nummer)
     const today = new Date();
-    const dateStr = today.toISOString().slice(2, 10).replace(/-/g, ''); // YYMMDD
+    const yearMonth = today.toISOString().slice(2, 7).replace('-', ''); // YYMM
     const prefix = orderData.orderType === 'fertigung' ? 'F' : 'S';
-    // Zähle bestehende Aufträge dieses Typs und Datums
-    const count = await prisma.order.count({
-      where: {
-        orderType: orderData.orderType,
-        createdAt: {
-          gte: new Date(today.getFullYear(), today.getMonth(), today.getDate()),
-          lt: new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1)
-        }
+    
+    // Finde die höchste laufende Nummer für diesen Monat
+    const yearMonthPattern = `${prefix}-${yearMonth}-`;
+    const mongoClient = new MongoClient('mongodb://localhost:27017');
+    await mongoClient.connect();
+    const dbConnection = mongoClient.db('matchdb');
+    const orderCollection = dbConnection.collection('Order');
+    
+    const existingOrders = await orderCollection.find({
+      orderNumber: { $regex: `^${yearMonthPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}` }
+    }).toArray();
+    
+    let nextNumber = 1;
+    if (existingOrders.length > 0) {
+      const numbers = existingOrders.map(order => {
+        const match = order.orderNumber.match(new RegExp(`^${yearMonthPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)$`));
+        return match ? parseInt(match[1]) : 0;
+      }).filter(num => num > 0);
+      
+      if (numbers.length > 0) {
+        nextNumber = Math.max(...numbers) + 1;
       }
-    });
-    const laufendeNummer = count + 1;
-    const auftragsnummer = `${prefix}-${dateStr}-${laufendeNummer}`;
-    // ---
-    const order = await prisma.order.create({
-      data: {
-        id: auftragsnummer,
-        title: orderData.title,
-        description: orderData.description,
-        clientId: orderData.clientId,
-        clientName: orderData.clientName,
-        deadline: new Date(orderData.deadline),
-        costCenter: orderData.costCenter,
-        priority: orderData.priority || 'medium',
-        status: orderData.status || 'pending',
-        estimatedHours: orderData.estimatedHours || 0,
-        actualHours: orderData.actualHours || 0,
-        assignedTo: orderData.assignedTo || null,
-        notes: orderData.notes || '',
-        orderType: orderData.orderType,
-        subTasks: orderData.subTasks || [],
-        revisionHistory: orderData.revisionHistory || [],
-        reworkComments: orderData.reworkComments || [],
-        // titleImage has been removed, will be handled by separate upload
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        documents: {
-          create: (documents || []).map(doc => ({
+    }
+    
+    const auftragsnummer = `${prefix}-${yearMonth}-${nextNumber}`;
+    
+    // Schließe die erste Connection
+    await mongoClient.close();
+    
+    // Verwende MongoDB direkt für die Erstellung (ohne Prisma-Transaktionen)
+    const mongoClient2 = new MongoClient('mongodb://localhost:27017');
+    
+    await mongoClient2.connect();
+    const db = mongoClient2.db('matchdb');
+    const collection = db.collection('Order');
+    
+    const newOrder = {
+      orderNumber: auftragsnummer,
+      title: orderData.title,
+      description: orderData.description,
+      clientId: orderData.clientId,
+      clientName: orderData.clientName,
+      deadline: new Date(orderData.deadline),
+      costCenter: orderData.costCenter,
+      priority: orderData.priority || 'medium',
+      status: orderData.status || 'pending',
+      estimatedHours: orderData.estimatedHours || 0,
+      actualHours: orderData.actualHours || 0,
+      assignedTo: orderData.assignedTo || null,
+      notes: orderData.notes || '',
+      orderType: orderData.orderType,
+      subTasks: orderData.subTasks || [],
+      revisionHistory: orderData.revisionHistory || [],
+      reworkComments: orderData.reworkComments || [],
+      confirmationNote: null,
+      confirmationDate: null,
+      canEdit: false,
+      materialOrderedByWorkshop: false,
+      materialOrderedByClient: false,
+      materialOrderedByClientConfirmed: false,
+      materialAvailable: false,
+      titleImageId: null,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    
+    const result = await collection.insertOne(newOrder);
+    
+    // Erstelle Dokumente separat
+    if (documents && documents.length > 0) {
+      const documentsCollection = db.collection('Document');
+      const documentObjects = documents.map(doc => ({
+        name: doc.name,
+        url: doc.url,
+        uploadDate: doc.uploadDate ? new Date(doc.uploadDate) : new Date(),
+        orderId: new ObjectId(result.insertedId) // Ensure ObjectId format
+      }));
+      await documentsCollection.insertMany(documentObjects);
+    }
+    
+    // Erstelle Komponenten separat
+    if (components && components.length > 0) {
+      const componentsCollection = db.collection('Component');
+      for (const comp of components) {
+        const componentObj = {
+          title: comp.title,
+          description: comp.description || '',
+          orderId: new ObjectId(result.insertedId), // Ensure ObjectId format
+          createdAt: new Date()
+        };
+        const compResult = await componentsCollection.insertOne(componentObj);
+        
+        // Erstelle Komponenten-Dokumente
+        if (comp.documents && comp.documents.length > 0) {
+          const compDocumentsCollection = db.collection('ComponentDocument');
+          const compDocumentObjects = comp.documents.map(doc => ({
             name: doc.name,
             url: doc.url,
-            uploadDate: doc.uploadDate ? new Date(doc.uploadDate) : new Date()
-          }))
-        },
-        components: {
-          create: (components || []).map(comp => ({
-            title: comp.title,
-            description: comp.description || '',
-            documents: {
-              create: (comp.documents || []).map(doc => ({
-                name: doc.name,
-                url: doc.url,
-                uploadDate: doc.uploadDate ? new Date(doc.uploadDate) : new Date()
-              }))
-            }
-          }))
+            uploadDate: doc.uploadDate ? new Date(doc.uploadDate) : new Date(),
+            componentId: new ObjectId(compResult.insertedId) // Ensure ObjectId format
+          }));
+          await compDocumentsCollection.insertMany(compDocumentObjects);
         }
-      },
+      }
+    }
+    
+    await mongoClient2.close();
+    
+    // Hole den erstellten Auftrag über Prisma zurück
+    const order = await prisma.order.findUnique({
+      where: { id: result.insertedId.toString() },
       include: { 
         documents: true,
         components: {
@@ -203,6 +260,7 @@ app.post('/api/orders', async (req, res) => {
         }
       }
     });
+    
     res.json(order);
   } catch (err) {
     res.status(500).json({ error: 'Fehler beim Anlegen des Auftrags', details: err.message });
@@ -235,7 +293,12 @@ app.put('/api/orders/:id', async (req, res) => {
       revisionRequest, // Vom Kunden für Nacharbeit
       revisionComment, // Von Werkstatt für Überarbeitung
       userId,          
-      userName
+      userName,
+      // Materialstatus-Felder
+      materialOrderedByWorkshop,
+      materialOrderedByClient,
+      materialOrderedByClientConfirmed,
+      materialAvailable
       // titleImage is no longer updated directly here
     } = req.body;
 
@@ -318,6 +381,11 @@ app.put('/api/orders/:id', async (req, res) => {
       subTasks: subTasks || [],
       revisionHistory, // Verlauf Werkstatt -> Kunde
       reworkComments,  // Verlauf Kunde -> Werkstatt
+      // Materialstatus-Felder
+      materialOrderedByWorkshop,
+      materialOrderedByClient,
+      materialOrderedByClientConfirmed,
+      materialAvailable,
       updatedAt: new Date()
     };
 
@@ -388,14 +456,39 @@ app.put('/api/orders/:id', async (req, res) => {
 
 app.delete('/api/orders/:id', async (req, res) => {
   try {
-    // Erst Dokumente löschen (wegen Foreign Key)
-    await prisma.document.deleteMany({ where: { orderId: req.params.id } });
+    const orderId = req.params.id;
     
-    // Das verbundene Bild wird dank "onDelete: Cascade" im Schema automatisch mitgelöscht.
+    // Lösche alle verknüpften Daten mit MongoDB direkt
+    const { MongoClient, ObjectId } = require('mongodb');
+    const mongoClient = new MongoClient('mongodb://localhost:27017');
+    await mongoClient.connect();
+    const db = mongoClient.db('matchdb');
     
-    await prisma.order.delete({ where: { id: req.params.id } });
+    try {
+      // 1. Finde alle Komponenten für diesen Auftrag
+      const components = await db.collection('Component').find({ orderId: new ObjectId(orderId) }).toArray();
+      
+      // 2. Lösche alle Komponenten-Dokumente
+      for (const component of components) {
+        await db.collection('ComponentDocument').deleteMany({ componentId: component._id });
+      }
+      
+      // 3. Lösche alle Komponenten
+      await db.collection('Component').deleteMany({ orderId: new ObjectId(orderId) });
+      
+      // 4. Lösche alle Auftragsdokumente
+      await db.collection('Document').deleteMany({ orderId: new ObjectId(orderId) });
+      
+      // 5. Lösche den Auftrag selbst
+      await db.collection('Order').deleteOne({ _id: new ObjectId(orderId) });
+      
+    } finally {
+      await mongoClient.close();
+    }
+    
     res.json({ success: true });
   } catch (err) {
+    console.error('Delete order error:', err);
     res.status(500).json({ error: 'Fehler beim Löschen des Auftrags', details: err.message });
   }
 });

@@ -3,12 +3,13 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mongodb"
   url      = env("DATABASE_URL")
 }
 
 model Order {
-  id            String   @id // Default entfernt, wird explizit gesetzt
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  orderNumber   String?  // Auftragsnummer (F-250707-1, etc.)
   title         String
   description   String
   clientId      String
@@ -29,18 +30,24 @@ model Order {
   components    Component[]  // Neue Bauteile-Relation
   revisionHistory  Json? // Kommentare von der Werkstatt an den Kunden
   reworkComments   Json? // Kommentare vom Kunden an die Werkstatt
-  confirmationNote String?       @db.Text
+  confirmationNote String?
   confirmationDate DateTime?
   canEdit          Boolean?      @default(false)
   noteHistory      NoteHistory[]
 
+  // Materialstatus-Felder
+  materialOrderedByWorkshop Boolean? @default(false)
+  materialOrderedByClient   Boolean? @default(false)
+  materialOrderedByClientConfirmed Boolean? @default(false)
+  materialAvailable         Boolean? @default(false)
+
   // Relation zum Titelbild
-  titleImage   Image? @relation(fields: [titleImageId], references: [id], onDelete: Cascade)
-  titleImageId String? @unique
+  titleImage   Image? @relation(fields: [titleImageId], references: [id])
+  titleImageId String? @unique @db.ObjectId
 }
 
 model Image {
-  id        String   @id @default(uuid())
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
   mimeType  String
   data      Bytes
   order     Order?
@@ -48,16 +55,16 @@ model Image {
 }
 
 model Document {
-  id         String   @id @default(uuid())
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
   name       String
   url        String
   uploadDate DateTime
   order      Order    @relation(fields: [orderId], references: [id])
-  orderId    String
+  orderId    String   @db.ObjectId
 }
 
 model User {
-  id          String   @id @default(uuid())
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
   username    String   @unique
   password    String
   name        String
@@ -68,28 +75,28 @@ model User {
 }
 
 model NoteHistory {
-  id        Int      @id @default(autoincrement())
-  orderId   String
-  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  orderId   String   @db.ObjectId
+  order     Order    @relation(fields: [orderId], references: [id])
   notes     String
   createdAt DateTime @default(now())
 }
 
 model Component {
-  id          String   @id @default(uuid())
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
   title       String
   description String?
-  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id])
+  orderId     String   @db.ObjectId
   documents   ComponentDocument[]
   createdAt   DateTime @default(now())
 }
 
 model ComponentDocument {
-  id          String    @id @default(uuid())
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
   name        String
   url         String
   uploadDate  DateTime
-  component   Component @relation(fields: [componentId], references: [id], onDelete: Cascade)
-  componentId String
+  component   Component @relation(fields: [componentId], references: [id])
+  componentId String    @db.ObjectId
 }

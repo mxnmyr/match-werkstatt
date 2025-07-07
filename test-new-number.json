@@ -1,0 +1,11 @@
+{
+  "title": "Test Neue Auftragsnummer",
+  "description": "Test für das neue Auftragsnummer-Format F-2507-1",
+  "clientId": "686bb4b770bd0a6c9ff75719",
+  "clientName": "Max Mustermann",
+  "deadline": "2025-07-25",
+  "costCenter": "TEST-NEUE-NUMMER",
+  "priority": "medium",
+  "status": "pending",
+  "orderType": "fertigung"
+}

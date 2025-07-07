@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Plus, Edit2, Trash2, User, Building2, Shield } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { WorkshopAccount } from '../types';
@@ -27,6 +27,24 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
     email: ''
   });
 
+  // Lade Accounts beim Öffnen der Komponente
+  useEffect(() => {
+    const loadAccounts = async () => {
+      try {
+        const response = await fetch('http://localhost:3001/api/users');
+        if (response.ok) {
+          const users = await response.json();
+          dispatch({ type: 'LOAD_WORKSHOP_ACCOUNTS', payload: users.filter((u: any) => u.role === 'workshop' || u.role === 'admin') });
+          dispatch({ type: 'LOAD_CLIENT_ACCOUNTS', payload: users.filter((u: any) => u.role === 'client') });
+        }
+      } catch (error) {
+        console.error('Fehler beim Laden der Accounts:', error);
+      }
+    };
+    
+    loadAccounts();
+  }, [dispatch]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editingAccount) {
@@ -40,7 +58,7 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
     } else {
       // Backend-Call für neuen User
       try {
-        const response = await fetch('/api/users', {
+        const response = await fetch('http://localhost:3001/api/users', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -56,6 +74,14 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
         }
         const newUser = await response.json();
         dispatch({ type: 'ADD_WORKSHOP_ACCOUNT', payload: newUser });
+        
+        // Accounts neu laden um sicherzustellen, dass alle Daten aktuell sind
+        const allUsersResponse = await fetch('http://localhost:3001/api/users');
+        if (allUsersResponse.ok) {
+          const users = await allUsersResponse.json();
+          dispatch({ type: 'LOAD_WORKSHOP_ACCOUNTS', payload: users.filter((u: any) => u.role === 'workshop' || u.role === 'admin') });
+          dispatch({ type: 'LOAD_CLIENT_ACCOUNTS', payload: users.filter((u: any) => u.role === 'client') });
+        }
       } catch (err) {
         alert('Netzwerkfehler beim Anlegen des Accounts!');
         return;
@@ -82,8 +108,16 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
       return;
     }
     if (confirm('Sind Sie sicher, dass Sie diesen Account löschen möchten?')) {
-      await fetch(`/api/users/${accountId}`, { method: 'DELETE' });
+      await fetch(`http://localhost:3001/api/users/${accountId}`, { method: 'DELETE' });
       dispatch({ type: 'DELETE_WORKSHOP_ACCOUNT', payload: accountId });
+      
+      // Accounts neu laden
+      const response = await fetch('http://localhost:3001/api/users');
+      if (response.ok) {
+        const users = await response.json();
+        dispatch({ type: 'LOAD_WORKSHOP_ACCOUNTS', payload: users.filter((u: any) => u.role === 'workshop' || u.role === 'admin') });
+        dispatch({ type: 'LOAD_CLIENT_ACCOUNTS', payload: users.filter((u: any) => u.role === 'client') });
+      }
     }
   };
 
@@ -115,8 +149,16 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
 
   const handleDeleteClient = async (id: string) => {
     if (window.confirm('Diesen Auftraggeber-Account wirklich löschen?')) {
-      await fetch(`/api/users/${id}`, { method: 'DELETE' });
+      await fetch(`http://localhost:3001/api/users/${id}`, { method: 'DELETE' });
       dispatch({ type: 'DELETE_CLIENT_ACCOUNT', payload: id });
+      
+      // Accounts neu laden
+      const response = await fetch('http://localhost:3001/api/users');
+      if (response.ok) {
+        const users = await response.json();
+        dispatch({ type: 'LOAD_WORKSHOP_ACCOUNTS', payload: users.filter((u: any) => u.role === 'workshop' || u.role === 'admin') });
+        dispatch({ type: 'LOAD_CLIENT_ACCOUNTS', payload: users.filter((u: any) => u.role === 'client') });
+      }
     }
   };
 
@@ -411,7 +453,7 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
                               {!account.isApproved && (
                                 <button
                                   onClick={async () => {
-                                    await fetch(`/api/users/${account.id}/approve`, { method: 'PATCH' });
+                                    await fetch(`http://localhost:3001/api/users/${account.id}/approve`, { method: 'PATCH' });
                                     dispatch({ type: 'APPROVE_CLIENT_ACCOUNT', payload: account.id });
                                   }}
                                   className="bg-green-600 text-white px-3 py-1 rounded text-xs hover:bg-green-700"

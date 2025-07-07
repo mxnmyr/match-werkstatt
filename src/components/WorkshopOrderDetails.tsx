@@ -48,7 +48,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   useEffect(() => {
     if (localOrder.titleImage) {
       // Append a timestamp to break browser cache when the image is updated
-      setTitleImageUrl(`/api/orders/${localOrder.id}/title-image?t=${new Date().getTime()}`);
+      setTitleImageUrl(`http://localhost:3001/api/orders/${localOrder.id}/title-image?t=${new Date().getTime()}`);
     } else {
       setTitleImageUrl('');
     }
@@ -71,6 +71,13 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
             case 'notes':
                 setNotes(value);
                 break;
+            case 'materialOrderedByWorkshop':
+            case 'materialOrderedByClient':
+            case 'materialOrderedByClientConfirmed':
+            case 'materialAvailable':
+                // Aktualisiere direkt den lokalen Order-State für Checkboxen
+                setLocalOrder(prev => ({ ...prev, [field]: value }));
+                break;
         }
     };
     updateLocalState();
@@ -90,7 +97,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     }
 
     try {
-      const response = await fetch(`/api/orders/${localOrder.id}`, {
+      const response = await fetch(`http://localhost:3001/api/orders/${localOrder.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedFields)
@@ -176,7 +183,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     formData.append('file', file);
 
     try {
-      const response = await fetch(`/api/orders/${localOrder.id}/upload-title-image`, {
+      const response = await fetch(`http://localhost:3001/api/orders/${localOrder.id}/upload-title-image`, {
         method: 'POST',
         body: formData,
       });
@@ -385,7 +392,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     }
     if (!window.confirm('Diesen Auftrag wirklich unwiderruflich löschen?')) return;
     try {
-      const response = await fetch(`/api/orders/${localOrder.id}`, {
+      const response = await fetch(`http://localhost:3001/api/orders/${localOrder.id}`, {
         method: 'DELETE',
       });
       if (!response.ok) {
@@ -425,7 +432,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
         <div className="flex justify-between items-center p-6 border-b">
           <div>
             <h2 className="text-2xl font-bold text-gray-900">{localOrder.title}</h2>
-            <p className="text-gray-600 mt-1">Auftrags-Nr.: {localOrder.id}</p>
+            <p className="text-gray-600 mt-1">Auftrags-Nr.: {localOrder.orderNumber || localOrder.id}</p>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -682,6 +689,58 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
                       placeholder="Notizen und Kommentare..."
                     />
+                  </div>
+
+                  {/* Materialstatus Sektion */}
+                  <div className="bg-gray-50 rounded-lg p-4 border">
+                    <label className="block text-sm font-medium text-gray-700 mb-3">
+                      📦 Materialstatus
+                    </label>
+                    <div className="space-y-3">
+                      <label className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={localOrder.materialOrderedByWorkshop || false}
+                          onChange={(e) => handleFieldChange('materialOrderedByWorkshop', e.target.checked)}
+                          disabled={!canModify && state.currentUser?.role !== 'admin'}
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
+                        />
+                        <span className="ml-3 text-sm text-gray-700">
+                          🏭 Material von der Werkstatt bestellt
+                        </span>
+                      </label>
+                      
+                      <label className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={localOrder.materialOrderedByClient || false}
+                          onChange={(e) => handleFieldChange('materialOrderedByClient', e.target.checked)}
+                          disabled={!canModify && state.currentUser?.role !== 'admin'}
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
+                        />
+                        <span className="ml-3 text-sm text-gray-700">
+                          👤 Material durch den Kunden bestellt
+                        </span>
+                        {localOrder.materialOrderedByClient && localOrder.materialOrderedByClientConfirmed && (
+                          <span className="ml-2 px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">
+                            ✓ Vom Kunden bestätigt
+                          </span>
+                        )}
+                      </label>
+                      
+                      <label className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={localOrder.materialAvailable || false}
+                          onChange={(e) => handleFieldChange('materialAvailable', e.target.checked)}
+                          disabled={!canModify && state.currentUser?.role !== 'admin'}
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
+                        />
+                        <span className="ml-3 text-sm text-gray-700">
+                          ✅ Material vorhanden
+                        </span>
+                      </label>
+                    </div>
                   </div>
 
                   <button

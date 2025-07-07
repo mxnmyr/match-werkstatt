@@ -42,6 +42,7 @@ export interface Image {
 
 export interface Order {
   id: string;
+  orderNumber?: string; // Auftragsnummer (F-250707-1, etc.)
   title: string;
   description: string;
   clientId: string;
@@ -62,6 +63,11 @@ export interface Order {
   canEdit?: boolean; // For revision state
   confirmationNote?: string; // Endabnahme-Kommentar vom Kunden
   confirmationDate?: Date;   // Wann bestätigt
+  // Materialstatus
+  materialOrderedByWorkshop?: boolean; // Material von der Werkstatt bestellt
+  materialOrderedByClient?: boolean;   // Material durch den Kunden bestellt (MUSS bestellt werden)
+  materialOrderedByClientConfirmed?: boolean; // Kunde bestätigt, dass Material bestellt wurde
+  materialAvailable?: boolean;         // Material vorhanden
   revisionRequest?: {
     description: string;
     newDeadline?: Date;
