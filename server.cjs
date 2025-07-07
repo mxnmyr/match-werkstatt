@@ -602,11 +602,93 @@ app.get('/api/orders/:id/title-image', async (req, res) => {
   }
 });
 
+// Dokument herunterladen für PDF-Generierung
+app.get('/api/documents/:id', async (req, res) => {
+  try {
+    const documentId = req.params.id;
+    console.log('Document download request for:', documentId);
+    
+    const document = await prisma.document.findUnique({
+      where: { id: documentId }
+    });
+
+    if (!document) {
+      return res.status(404).json({ error: 'Dokument nicht gefunden' });
+    }
+
+    // Extrahiere Dateiname aus der URL
+    const fs = require('fs');
+    const path = require('path');
+    
+    // Die URL ist normalerweise: http://localhost:3001/uploads/filename
+    const filename = document.url.split('/').pop();
+    const filePath = path.join(__dirname, 'storage/uploads', filename);
+    
+    console.log('Trying to serve file:', filePath);
+    
+    if (!fs.existsSync(filePath)) {
+      console.error('File not found:', filePath);
+      return res.status(404).json({ error: 'Datei nicht gefunden', path: filePath });
+    }
+
+    // Content-Type für PDF setzen
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${document.name}"`);
+    
+    // Datei zurückgeben
+    res.sendFile(path.resolve(filePath));
+  } catch (err) {
+    console.error('Document download error:', err);
+    res.status(500).json({ error: 'Fehler beim Herunterladen des Dokuments', details: err.message });
+  }
+});
+
 app.use('/uploads', express.static(uploadsDir));
 
 // --- TEST ENDPOINT ---
 app.get('/api/test', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// QR-Code/Barcode-Lookup Endpunkt
+app.get('/api/orders/barcode/:code', async (req, res) => {
+  try {
+    const code = req.params.code;
+    console.log('QR-Code/Barcode lookup for:', code);
+    
+    // Suche nach Auftragsnummer oder ID
+    const order = await prisma.order.findFirst({
+      where: {
+        OR: [
+          { orderNumber: code },
+          { id: code }
+        ]
+      },
+      include: {
+        documents: true,
+        components: {
+          include: {
+            documents: true
+          }
+        },
+        noteHistory: {
+          orderBy: {
+            createdAt: 'desc',
+          },
+        },
+        titleImage: true,
+      },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'Auftrag nicht gefunden' });
+    }
+
+    res.json(order);
+  } catch (err) {
+    console.error('QR-Code/Barcode lookup error:', err);
+    res.status(500).json({ error: 'Fehler beim QR-Code-Lookup', details: err.message });
+  }
 });
 
 server.listen(PORT, () => {

@@ -1,14 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, User, Eye, Filter, Search, Settings, ChevronRight } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Calendar, Clock, User, Eye, Filter, Search, Settings, ChevronRight, QrCode } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import WorkshopOrderDetails from './WorkshopOrderDetails';
 import AccountManagement from './AccountManagement';
 import ArchiveView from './ArchiveView';
 import CreateOrder from './CreateOrder';
+import QRCodeScanner from './QRCodeScanner';
 import { Order } from '../types';
 
 export default function WorkshopDashboard() {
   const { state, dispatch } = useApp();
+  const location = useLocation();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -17,6 +20,7 @@ export default function WorkshopDashboard() {
   const [showArchive, setShowArchive] = useState(false);
   const [showCreateOrder, setShowCreateOrder] = useState(false);
   const [orders, setOrders] = useState<Order[]>(state.orders);
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
 
   // Orders nach jedem Öffnen/Schließen des Modals neu laden
   const fetchOrders = async () => {
@@ -26,9 +30,67 @@ export default function WorkshopDashboard() {
     if (dispatch) dispatch({ type: 'LOAD_ORDERS', payload: data });
   };
 
+  // QR-Code-Scanner Handler
+  const handleBarcodeScanned = async (code: string) => {
+    try {
+      console.log('QR-Code gescannt:', code);
+      
+      // Suche nach Auftrag mit diesem Code
+      const response = await fetch(`http://localhost:3001/api/orders/barcode/${encodeURIComponent(code)}`);
+      
+      if (!response.ok) {
+        if (response.status === 404) {
+          dispatch({ 
+            type: 'SHOW_NOTIFICATION', 
+            payload: { message: `Kein Auftrag mit Code "${code}" gefunden.`, type: 'error' } 
+          });
+        } else {
+          throw new Error('Fehler beim Suchen des Auftrags');
+        }
+        return;
+      }
+
+      const order = await response.json();
+      console.log('Auftrag gefunden:', order);
+      
+      // Schließe Scanner und öffne Auftrag
+      setShowBarcodeScanner(false);
+      setSelectedOrder(order);
+      
+      dispatch({ 
+        type: 'SHOW_NOTIFICATION', 
+        payload: { message: `Auftrag "${order.orderNumber || order.id}" geöffnet.`, type: 'success' } 
+      });
+      
+    } catch (error) {
+      console.error('Fehler beim QR-Code-Scan:', error);
+      dispatch({ 
+        type: 'SHOW_NOTIFICATION', 
+        payload: { message: 'Fehler beim Suchen des Auftrags.', type: 'error' } 
+      });
+    }
+  };
+
   useEffect(() => {
     setOrders(state.orders);
-  }, [state.orders]);
+    
+    // Handle opening specific order from QR code redirect
+    const locationState = location.state as { openOrderId?: string } | null;
+    if (locationState?.openOrderId && orders.length > 0) {
+      const orderToOpen = orders.find(order => 
+        order.id === locationState.openOrderId || 
+        order.orderNumber === locationState.openOrderId
+      );
+      
+      if (orderToOpen) {
+        setSelectedOrder(orderToOpen);
+        dispatch({ 
+          type: 'SHOW_NOTIFICATION', 
+          payload: { message: `Auftrag "${orderToOpen.orderNumber || orderToOpen.id}" über QR-Code geöffnet.`, type: 'success' } 
+        });
+      }
+    }
+  }, [state.orders, location.state, orders, dispatch]);
 
   // Filter orders based on user role and view mode
   const getFilteredOrders = () => {
@@ -171,6 +233,26 @@ export default function WorkshopDashboard() {
   const fertigungOrders = displayItems.filter(item => item.type === 'order' && item.order && item.order.orderType === 'fertigung');
   const serviceOrders = displayItems.filter(item => item.type === 'order' && item.order && item.order.orderType === 'service');
 
+  // Handle opening order from QR code URL
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const orderId = searchParams.get('orderId');
+    const barcode = searchParams.get('barcode');
+
+    if (orderId) {
+      const order = orders.find(order => order.id === orderId);
+      if (order) {
+        setSelectedOrder(order);
+        dispatch({ 
+          type: 'SHOW_NOTIFICATION', 
+          payload: { message: `Auftrag "${order.orderNumber || order.id}" geöffnet.`, type: 'success' } 
+        });
+      }
+    } else if (barcode) {
+      handleBarcodeScanned(barcode);
+    }
+  }, [location.search, orders, handleBarcodeScanned, dispatch]);
+
   if (showAccountManagement) {
     return <AccountManagement onClose={() => setShowAccountManagement(false)} />;
   }
@@ -190,6 +272,14 @@ export default function WorkshopDashboard() {
           <h2 className="text-2xl font-bold text-gray-900 mb-6">Werkstattaufträge</h2>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => setShowBarcodeScanner(true)}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center"
+            title="QR-Code-Scanner öffnen - Sie werden zur Kamera-Berechtigung aufgefordert"
+          >
+            <QrCode className="w-4 h-4 mr-2" />
+            📷 QR-Code scannen
+          </button>
           <button
             onClick={() => setShowArchive(true)}
             className="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-900 transition-colors"
@@ -474,6 +564,14 @@ export default function WorkshopDashboard() {
             </table>
           </div>
         </div>
+      )}
+
+      {/* QR-Code Scanner */}
+      {showBarcodeScanner && (
+        <QRCodeScanner
+          onScan={handleBarcodeScanned}
+          onClose={() => setShowBarcodeScanner(false)}
+        />
       )}
     </div>
   );

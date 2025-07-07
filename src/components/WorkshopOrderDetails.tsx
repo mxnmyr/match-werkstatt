@@ -10,10 +10,12 @@ import {
   Trash2,
   Archive,
   Download,
-  Upload
+  Upload,
+  Printer
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Order, SubTask, PDFDocument, RevisionComment, NoteHistory } from '../types';
+import OrderPDFGenerator from '../utils/OrderPDFGenerator';
 
 interface WorkshopOrderDetailsProps {
   order: Order;
@@ -41,6 +43,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   const [revisionComment, setRevisionComment] = useState('');
   const [revisionError, setRevisionError] = useState('');
   const [titleImageUrl, setTitleImageUrl] = useState('');
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
   // Zustand für bearbeitete Felder
   const [changedFields, setChangedFields] = useState<Partial<Order>>({});
@@ -436,6 +439,44 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     return assignedUser + scope;
   };
 
+  // PDF generieren und herunterladen
+  const handlePrintOrder = async () => {
+    try {
+      setIsGeneratingPDF(true);
+      
+      const pdfGenerator = new OrderPDFGenerator(localOrder, {
+        includeDocuments: true,
+        includeComponents: true,
+        includeQRCode: true
+      });
+
+      const pdfBlob = await pdfGenerator.generatePDF();
+      
+      // PDF herunterladen
+      const url = URL.createObjectURL(pdfBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Auftrag_${localOrder.orderNumber || localOrder.id}_${new Date().toISOString().split('T')[0]}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      dispatch({ 
+        type: 'SHOW_NOTIFICATION', 
+        payload: { message: 'PDF erfolgreich erstellt!', type: 'success' } 
+      });
+    } catch (error) {
+      console.error('Fehler beim Erstellen der PDF:', error);
+      dispatch({ 
+        type: 'SHOW_NOTIFICATION', 
+        payload: { message: 'Fehler beim Erstellen der PDF!', type: 'error' } 
+      });
+    } finally {
+      setIsGeneratingPDF(false);
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="bg-white rounded-lg shadow-sm border">
@@ -445,6 +486,15 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
             <p className="text-gray-600 mt-1">Auftrags-Nr.: {localOrder.orderNumber || localOrder.id}</p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={handlePrintOrder}
+              disabled={isGeneratingPDF}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:bg-gray-400 transition-colors flex items-center"
+              title="PDF mit QR-Code erstellen (scanbar mit Handy/Scanner zum direkten Öffnen)"
+            >
+              <Printer className="w-4 h-4 mr-2" />
+              {isGeneratingPDF ? 'Erstelle PDF...' : 'PDF + QR-Code'}
+            </button>
             <button
               onClick={onClose}
               className="text-gray-400 hover:text-gray-600 transition-colors"

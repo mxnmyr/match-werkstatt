@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, FileText, Calendar, DollarSign, Clock, Eye, Edit2 } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import CreateOrder from './CreateOrder';
 import OrderDetails from './OrderDetails';
@@ -9,6 +10,7 @@ import { Order } from '../types';
 
 export default function ClientDashboard() {
   const { state, dispatch } = useApp();
+  const location = useLocation();
   const [showCreateOrder, setShowCreateOrder] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
@@ -25,7 +27,24 @@ export default function ClientDashboard() {
 
   useEffect(() => {
     setOrders(state.orders);
-  }, [state.orders]);
+    
+    // Handle opening specific order from QR code redirect
+    const locationState = location.state as { openOrderId?: string } | null;
+    if (locationState?.openOrderId && orders.length > 0) {
+      const orderToOpen = orders.find(order => 
+        (order.id === locationState.openOrderId || order.orderNumber === locationState.openOrderId) &&
+        order.clientId === state.currentUser?.id // Only allow viewing own orders
+      );
+      
+      if (orderToOpen) {
+        setSelectedOrder(orderToOpen);
+        dispatch({ 
+          type: 'SHOW_NOTIFICATION', 
+          payload: { message: `Auftrag "${orderToOpen.orderNumber || orderToOpen.id}" über QR-Code geöffnet.`, type: 'success' } 
+        });
+      }
+    }
+  }, [state.orders, location.state, orders, dispatch, state.currentUser?.id]);
 
   // Initial orders laden
   useEffect(() => {

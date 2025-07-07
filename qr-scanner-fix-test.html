@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR-Code-Scanner Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .feature {
+            margin: 20px 0;
+            padding: 15px;
+            border-left: 4px solid #3b82f6;
+            background: #eff6ff;
+        }
+        .button {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #3b82f6;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+        .button:hover {
+            background: #2563eb;
+        }
+        .test-qr {
+            text-align: center;
+            margin: 20px 0;
+            padding: 20px;
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+        }
+        h1 { color: #1f2937; }
+        h2 { color: #374151; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎥 QR-Code-Scanner mit Browser-Kamera-Berechtigung</h1>
+        
+        <div class="feature">
+            <h2>✅ Problem behoben:</h2>
+            <p><strong>Chrome und andere Browser benötigen eine explizite Benutzeraktion</strong> um die Kamera-Berechtigung anzufragen. 
+            Der automatische Start im useEffect funktionierte nicht.</p>
+        </div>
+
+        <div class="feature">
+            <h2>🎯 Neue Lösung:</h2>
+            <ul>
+                <li><strong>Prominenter "Kamera aktivieren" Button</strong> - Benutzer klickt bewusst</li>
+                <li><strong>Klare Anweisungen</strong> - 3-Schritt-Anleitung im Dialog</li>
+                <li><strong>Visuelle Führung</strong> - Große Kamera-Icon und Call-to-Action</li>
+                <li><strong>Bessere Fehlerbehandlung</strong> - Spezifische Meldungen für Kamera-Probleme</li>
+            </ul>
+        </div>
+
+        <div class="feature">
+            <h2>🎨 UI-Verbesserungen:</h2>
+            <ul>
+                <li><strong>Größerer Video-Bereich</strong> (264px hoch statt 192px)</li>
+                <li><strong>Dickerer grüner Rahmen</strong> (4px statt 2px) für bessere Sichtbarkeit</li>
+                <li><strong>Hilfreiche Overlay-Texte</strong> im Video-Bereich</li>
+                <li><strong>Stoppen/Neu starten Buttons</strong> für bessere Kontrolle</li>
+                <li><strong>Verbesserte manuelle Eingabe</strong> mit Beispiel-Placeholder</li>
+            </ul>
+        </div>
+
+        <div class="test-qr">
+            <h2>🧪 So testen Sie die neue Funktionalität:</h2>
+            <ol style="text-align: left;">
+                <li>Öffnen Sie die Hauptanwendung: <a href="http://localhost:5173" class="button">🚀 App öffnen</a></li>
+                <li>Loggen Sie sich ein (Werkstatt-Account)</li>
+                <li>Klicken Sie auf "📷 QR-Code scannen"</li>
+                <li>Klicken Sie auf den großen blauen "🎥 Kamera aktivieren" Button</li>
+                <li>Chrome wird nach Kamera-Berechtigung fragen → <strong>Erlauben</strong> klicken</li>
+                <li>Die Kamera startet und zeigt den grünen Scan-Rahmen</li>
+            </ol>
+        </div>
+
+        <div class="feature">
+            <h2>📱 Browser-Verhalten:</h2>
+            <ul>
+                <li><strong>Chrome/Edge:</strong> Fragt bei erstem Zugriff nach Berechtigung</li>
+                <li><strong>Firefox:</strong> Zeigt Berechtigung in der Adressleiste</li>
+                <li><strong>Safari:</strong> Popup-Dialog für Kamera-Zugriff</li>
+                <li><strong>Weitere Zugriffe:</strong> Kamera startet sofort (Berechtigung gespeichert)</li>
+            </ul>
+        </div>
+
+        <div class="feature">
+            <h2>🔧 Technische Details:</h2>
+            <p><strong>Vorher:</strong> <code>useEffect(() => startScanning())</code> - Funktioniert nicht wegen fehlender User-Interaktion</p>
+            <p><strong>Nachher:</strong> <code>onClick={startScanning}</code> - Funktioniert perfekt, da direkte Benutzeraktion</p>
+        </div>
+
+        <div style="text-align: center; margin-top: 30px;">
+            <p><em>Die Kamera-Berechtigung wird jetzt korrekt angefragt! 🎉</em></p>
+        </div>
+    </div>
+</body>
+</html>
