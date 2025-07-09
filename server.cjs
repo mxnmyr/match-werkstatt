@@ -608,11 +608,26 @@ app.get('/api/documents/:id', async (req, res) => {
     const documentId = req.params.id;
     console.log('Document download request for:', documentId);
     
-    const document = await prisma.document.findUnique({
+    // Zuerst in der normalen Document-Tabelle suchen
+    let document = await prisma.document.findUnique({
       where: { id: documentId }
     });
 
+    // Falls nicht gefunden, in der ComponentDocument-Tabelle suchen
     if (!document) {
+      document = await prisma.componentDocument.findUnique({
+        where: { id: documentId }
+      });
+      
+      if (document) {
+        console.log('Found component document:', document.name);
+      }
+    } else {
+      console.log('Found order document:', document.name);
+    }
+
+    if (!document) {
+      console.log('Document not found in both tables for ID:', documentId);
       return res.status(404).json({ error: 'Dokument nicht gefunden' });
     }
 
@@ -656,13 +671,25 @@ app.get('/api/orders/barcode/:code', async (req, res) => {
     const code = req.params.code;
     console.log('QR-Code/Barcode lookup for:', code);
     
-    // Suche nach Auftragsnummer oder ID
+    // Helper function to check if string is a valid MongoDB ObjectID
+    const isValidObjectId = (str) => {
+      return /^[a-fA-F0-9]{24}$/.test(str);
+    };
+
+    // Build search conditions - only search by ID if it's a valid ObjectID
+    const searchConditions = [
+      { orderNumber: code }
+    ];
+
+    // Only add ID search if the code is a valid ObjectID format
+    if (isValidObjectId(code)) {
+      searchConditions.push({ id: code });
+    }
+    
+    // Suche nach Auftragsnummer oder ID (falls gültige ObjectID)
     const order = await prisma.order.findFirst({
       where: {
-        OR: [
-          { orderNumber: code },
-          { id: code }
-        ]
+        OR: searchConditions
       },
       include: {
         documents: true,
@@ -681,9 +708,11 @@ app.get('/api/orders/barcode/:code', async (req, res) => {
     });
 
     if (!order) {
+      console.log(`No order found for code: ${code} (searched ${searchConditions.length} conditions)`);
       return res.status(404).json({ error: 'Auftrag nicht gefunden' });
     }
 
+    console.log(`Found order: ${order.orderNumber || order.id} for code: ${code}`);
     res.json(order);
   } catch (err) {
     console.error('QR-Code/Barcode lookup error:', err);
@@ -693,5 +722,22 @@ app.get('/api/orders/barcode/:code', async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Backend listening on http://localhost:${PORT}`);
+  console.log(`WebSocket server running on ws://localhost:${PORT}`);
+});
+
+// WebSocket connection handler
+wss.on('connection', (ws) => {
+  console.log('New WebSocket connection established');
+  
+  ws.on('message', (message) => {
+    console.log('Received WebSocket message:', message);
+  });
+  
+  ws.on('close', () => {
+    console.log('WebSocket connection closed');
+  });
+  
+  // Send initial connection confirmation
+  ws.send(JSON.stringify({ type: 'connected', payload: 'WebSocket connection established' }));
 });
 

@@ -205,12 +205,6 @@ export class OrderPDFGenerator {
   }
 
   private async mergeDocuments(coverPdf: jsPDF): Promise<Uint8Array> {
-    if (!this.options.includeDocuments || !this.order.documents || this.order.documents.length === 0) {
-      return new Uint8Array(coverPdf.output('arraybuffer'));
-    }
-
-    console.log('Merging documents. Document count:', this.order.documents.length);
-
     const pdfDoc = await PDFDocument.create();
     
     // Cover Page hinzufügen
@@ -219,64 +213,117 @@ export class OrderPDFGenerator {
     const coverPages = await pdfDoc.copyPages(coverPdfDoc, coverPdfDoc.getPageIndices());
     coverPages.forEach((page) => pdfDoc.addPage(page));
 
-    // Angehängte PDFs hinzufügen
-    for (const document of this.order.documents) {
-      try {
-        console.log('Processing document:', document.name, 'ID:', document.id);
-        const docBuffer = await this.fetchDocumentAsArrayBuffer(document.id);
-        console.log('Document buffer size:', docBuffer.byteLength);
-        
-        const docPdf = await PDFDocument.load(docBuffer);
-        const pageCount = docPdf.getPageCount();
-        console.log('Document has', pageCount, 'pages');
-        
-        const pages = await pdfDoc.copyPages(docPdf, docPdf.getPageIndices());
-        
-        pages.forEach((page, index) => {
-          console.log(`Adding page ${index + 1} of ${pageCount} from ${document.name}`);
-          
-          // Einfacher Header ohne komplexe Zeichnungen
-          const { width, height } = page.getSize();
-          
-          // Header-Text hinzufügen
-          page.drawText(`${this.order.title} | ${this.order.clientName} | ${this.order.orderNumber || this.order.id}`, {
-            x: 20,
-            y: height - 25,
-            size: 10,
-            color: rgb(0.3, 0.3, 0.3)
-          });
-          
-          // Trennlinie
-          page.drawLine({
-            start: { x: 20, y: height - 30 },
-            end: { x: width - 20, y: height - 30 },
-            thickness: 0.5,
-            color: rgb(0.8, 0.8, 0.8)
-          });
-          
-          pdfDoc.addPage(page);
-        });
-      } catch (error) {
-        console.error(`Error merging document ${document.name}:`, error);
-        // Füge eine Fehlerseite hinzu
-        const errorPage = pdfDoc.addPage();
-        errorPage.drawText(`Fehler beim Laden von: ${document.name}`, {
-          x: 50,
-          y: 700,
-          size: 14,
-          color: rgb(1, 0, 0)
-        });
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        errorPage.drawText(`Error: ${errorMessage}`, {
-          x: 50,
-          y: 680,
-          size: 10,
-          color: rgb(0.5, 0, 0)
-        });
+    // 1. Hauptdokumente des Auftrags hinzufügen
+    if (this.options.includeDocuments && this.order.documents && this.order.documents.length > 0) {
+      console.log('Merging order documents. Count:', this.order.documents.length);
+      
+      for (const document of this.order.documents) {
+        await this.addDocumentToMergedPDF(pdfDoc, document, 'Auftragsdokument');
       }
     }
 
-    return await pdfDoc.save();
+    // 2. Bauteil-Zeichnungen hinzufügen (falls gewünscht)
+    if (this.options.includeComponents && this.order.components && this.order.components.length > 0) {
+      console.log('Merging component documents. Component count:', this.order.components.length);
+      
+      for (const component of this.order.components) {
+        if (component.documents && component.documents.length > 0) {
+          console.log(`Processing component "${component.title}" with ${component.documents.length} documents`);
+          
+          for (const document of component.documents) {
+            await this.addDocumentToMergedPDF(pdfDoc, document, `Bauteil: ${component.title}`);
+          }
+        }
+      }
+    }
+
+    return pdfDoc.save();
+  }
+
+  private async addDocumentToMergedPDF(pdfDoc: PDFDocument, document: any, documentType: string): Promise<void> {
+    try {
+      console.log(`Processing ${documentType}:`, document.name, 'ID:', document.id);
+      const docBuffer = await this.fetchDocumentAsArrayBuffer(document.id);
+      console.log('Document buffer size:', docBuffer.byteLength);
+      
+      const docPdf = await PDFDocument.load(docBuffer);
+      const pageCount = docPdf.getPageCount();
+      console.log('Document has', pageCount, 'pages');
+      
+      const pages = await pdfDoc.copyPages(docPdf, docPdf.getPageIndices());
+      
+      // QR-Code für Header generieren und als PDF-Image vorbereiten
+      const qrCodeDataUrl = await this.generateQRCode(this.order.orderNumber || this.order.id);
+      let qrCodeImage: any = null;
+      
+      try {
+        // QR-Code als PNG-Bytes konvertieren und in PDF einbetten
+        const qrCodeBase64 = qrCodeDataUrl.split(',')[1];
+        const qrCodeBytes = Uint8Array.from(atob(qrCodeBase64), c => c.charCodeAt(0));
+        qrCodeImage = await pdfDoc.embedPng(qrCodeBytes);
+      } catch (qrError) {
+        console.warn('Could not embed QR code in component document:', qrError);
+      }
+      
+      pages.forEach((page, index) => {
+        console.log(`Adding page ${index + 1} of ${pageCount} from ${document.name} (${documentType})`);
+        
+        const { width, height } = page.getSize();
+        
+        // Header-Hintergrund (leicht transparent)
+        page.drawRectangle({
+          x: 0,
+          y: height - 50,
+          width: width,
+          height: 50,
+          color: rgb(0.95, 0.95, 0.95),
+          opacity: 0.8
+        });
+        
+        // QR-Code in der rechten Ecke des Headers hinzufügen
+        if (qrCodeImage) {
+          try {
+            page.drawImage(qrCodeImage, {
+              x: width - 65,
+              y: height - 45,
+              width: 40,
+              height: 40
+            });
+          } catch (qrDrawError) {
+            console.warn('Could not draw QR code image:', qrDrawError);
+          }
+        }
+        
+        // Header-Text links
+        page.drawText(`${this.order.title}`, {
+          x: 15,
+          y: height - 20,
+          size: 12,
+          color: rgb(0.2, 0.2, 0.2)
+        });
+        
+        page.drawText(`${documentType} | Kunde: ${this.order.clientName} | Nr: ${this.order.orderNumber || this.order.id}`, {
+          x: 15,
+          y: height - 35,
+          size: 10,
+          color: rgb(0.4, 0.4, 0.4)
+        });
+        
+        // Trennlinie unter dem Header
+        page.drawLine({
+          start: { x: 10, y: height - 52 },
+          end: { x: width - 10, y: height - 52 },
+          thickness: 1,
+          color: rgb(0.7, 0.7, 0.7)
+        });
+        
+        pdfDoc.addPage(page);
+      });
+      
+    } catch (error) {
+      console.error(`Error processing ${documentType} ${document.name}:`, error);
+      // Weitermachen mit dem nächsten Dokument
+    }
   }
 
   public async generatePDF(): Promise<Blob> {

@@ -2,12 +2,12 @@ import { useState, useRef, useEffect } from 'react';
 import { X, Camera, AlertCircle, Search } from 'lucide-react';
 import jsQR from 'jsqr';
 
-interface QRCodeScannerProps {
+interface QRCodeScannerProdProps {
   onScan: (code: string) => void;
   onClose: () => void;
 }
 
-export default function QRCodeScanner({ onScan, onClose }: QRCodeScannerProps) {
+export default function QRCodeScannerProd({ onScan, onClose }: QRCodeScannerProdProps) {
   const [isScanning, setIsScanning] = useState(false);
   const [manualCode, setManualCode] = useState('');
   const [error, setError] = useState<string | null>(null);

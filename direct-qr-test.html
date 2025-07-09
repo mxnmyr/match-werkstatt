@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Direct QR Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .test { margin: 20px 0; padding: 20px; border: 1px solid #ccc; }
+        canvas { border: 2px solid #000; margin: 10px; }
+        button { padding: 10px; margin: 5px; }
+        .log { background: #f5f5f5; padding: 10px; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Direct QR Detection Test</h1>
+    
+    <div class="test">
+        <h2>📱 Test with jsQR</h2>
+        <button onclick="testWithJsQR()">Test jsQR Detection</button>
+        <canvas id="testCanvas" width="300" height="300"></canvas>
+    </div>
+    
+    <div class="test">
+        <h2>📊 Results</h2>
+        <div id="results" class="log">Ready for testing...</div>
+    </div>
+
+    <!-- Use jsQR from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+    
+    <script>
+        function log(message) {
+            const results = document.getElementById('results');
+            results.innerHTML += new Date().toLocaleTimeString() + ': ' + message + '<br>';
+        }
+        
+        // Generate a simple QR code manually
+        function generateSimpleQR() {
+            const canvas = document.getElementById('testCanvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Clear
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, 300, 300);
+            
+            // Draw QR pattern manually (simplified)
+            ctx.fillStyle = 'black';
+            
+            // Outer quiet zone
+            const size = 21; // Standard QR size
+            const moduleSize = 10;
+            const offset = 50;
+            
+            // Draw timing patterns and finder patterns
+            for (let i = 0; i < size; i++) {
+                for (let j = 0; j < size; j++) {
+                    const x = offset + i * moduleSize;
+                    const y = offset + j * moduleSize;
+                    
+                    // Finder patterns (corners)
+                    if ((i < 7 && j < 7) || (i >= size-7 && j < 7) || (i < 7 && j >= size-7)) {
+                        if ((i < 2 || i > 4) && (j < 2 || j > 4)) {
+                            ctx.fillRect(x, y, moduleSize-1, moduleSize-1);
+                        }
+                    }
+                    
+                    // Simple data pattern
+                    if (i > 8 && i < size-8 && j > 8 && j < size-8) {
+                        if ((i + j) % 2 === 0) {
+                            ctx.fillRect(x, y, moduleSize-1, moduleSize-1);
+                        }
+                    }
+                }
+            }
+            
+            log('✅ Simple QR pattern generated');
+        }
+        
+        async function testWithJsQR() {
+            if (!window.jsQR) {
+                log('❌ jsQR not available');
+                return;
+            }
+            
+            log('🧪 Testing with jsQR...');
+            
+            // First test with our generated pattern
+            const canvas = document.getElementById('testCanvas');
+            const ctx = canvas.getContext('2d');
+            
+            generateSimpleQR();
+            
+            // Get image data
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            
+            try {
+                const code = jsQR(imageData.data, imageData.width, imageData.height);
+                if (code) {
+                    log('🎯 jsQR SUCCESS: ' + code.data);
+                } else {
+                    log('ℹ️ jsQR: No QR code detected in test pattern (expected)');
+                    
+                    // Now test with a real QR from our app
+                    await testWithRealQR();
+                }
+            } catch (error) {
+                log('❌ jsQR error: ' + error);
+            }
+        }
+        
+        async function testWithRealQR() {
+            log('🔄 Testing with real QR from main app...');
+            
+            try {
+                // Try to get the QR canvas from the verification page
+                const iframe = document.createElement('iframe');
+                iframe.src = 'qr-verification-test.html';
+                iframe.style.display = 'none';
+                document.body.appendChild(iframe);
+                
+                iframe.onload = () => {
+                    setTimeout(() => {
+                        try {
+                            const iframeDoc = iframe.contentDocument;
+                            const sourceCanvas = iframeDoc.getElementById('qrCanvas');
+                            
+                            if (sourceCanvas) {
+                                const canvas = document.getElementById('testCanvas');
+                                const ctx = canvas.getContext('2d');
+                                
+                                // Copy the QR code
+                                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                                ctx.fillStyle = 'white';
+                                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                                ctx.drawImage(sourceCanvas, 50, 50, 200, 200);
+                                
+                                // Test with jsQR
+                                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                                const code = jsQR(imageData.data, imageData.width, imageData.height);
+                                
+                                if (code) {
+                                    log('🎯 jsQR SUCCESS with real QR: ' + code.data);
+                                } else {
+                                    log('❌ jsQR failed with real QR too');
+                                }
+                            } else {
+                                log('❌ Could not access QR canvas from verification page');
+                            }
+                        } catch (error) {
+                            log('❌ Cross-frame access error: ' + error.message);
+                        }
+                        
+                        document.body.removeChild(iframe);
+                    }, 2000);
+                };
+                
+            } catch (error) {
+                log('❌ Real QR test error: ' + error);
+            }
+        }
+        
+        // Auto-start
+        window.onload = function() {
+            log('🔧 Direct test page loaded');
+            log('jsQR available: ' + !!window.jsQR);
+        };
+    </script>
+</body>
+</html>

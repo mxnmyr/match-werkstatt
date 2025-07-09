@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR-Code Test Generator</title>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        .qr-container {
+            margin: 20px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            margin: 10px;
+        }
+        input {
+            width: 400px;
+            padding: 8px;
+            margin: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h1>QR-Code Test Generator</h1>
+    <p>Generiere QR-Codes für Tests der Scan-Funktionalität</p>
+    
+    <div class="qr-container">
+        <h3>Standard Test-URLs</h3>
+        <div id="predefined-qr-codes"></div>
+    </div>
+    
+    <div class="qr-container">
+        <h3>Benutzerdefinierter QR-Code</h3>
+        <input 
+            type="text" 
+            id="custom-url" 
+            placeholder="http://localhost:3000/order/12345"
+            value="http://localhost:3000/order/12345"
+        >
+        <br>
+        <button onclick="generateCustomQR()">QR-Code generieren</button>
+        <br>
+        <canvas id="custom-qr"></canvas>
+    </div>
+    
+    <div class="qr-container">
+        <h3>Test-Anleitung</h3>
+        <ol style="text-align: left;">
+            <li>QR-Code mit diesem Generator erstellen</li>
+            <li>QR-Code auf einem zweiten Gerät/Monitor anzeigen</li>
+            <li>In der Match-Werkstatt-App den QR-Scanner öffnen</li>
+            <li>QR-Code scannen und prüfen, ob die korrekte URL geöffnet wird</li>
+        </ol>
+    </div>
+
+    <script>
+        // Vordefinierte Test-URLs
+        const testUrls = [
+            'http://localhost:3000/order/12345',
+            'http://localhost:3000/order/67890',
+            'http://localhost:3000/workshop',
+            'http://localhost:3000/client'
+        ];
+
+        // Generiere vordefinierte QR-Codes
+        function generatePredefinedQRs() {
+            const container = document.getElementById('predefined-qr-codes');
+            
+            testUrls.forEach((url, index) => {
+                const div = document.createElement('div');
+                div.style.display = 'inline-block';
+                div.style.margin = '10px';
+                
+                const label = document.createElement('p');
+                label.textContent = url;
+                label.style.fontSize = '12px';
+                label.style.margin = '5px';
+                
+                const canvas = document.createElement('canvas');
+                canvas.id = `qr-${index}`;
+                
+                div.appendChild(label);
+                div.appendChild(canvas);
+                container.appendChild(div);
+                
+                // QR-Code generieren
+                QRCode.toCanvas(canvas, url, {
+                    width: 200,
+                    margin: 2
+                }, function (error) {
+                    if (error) console.error('QR-Code Fehler:', error);
+                });
+            });
+        }
+
+        // Benutzerdefinierte QR-Code-Generierung
+        function generateCustomQR() {
+            const url = document.getElementById('custom-url').value;
+            const canvas = document.getElementById('custom-qr');
+            
+            if (!url) {
+                alert('Bitte eine URL eingeben');
+                return;
+            }
+            
+            QRCode.toCanvas(canvas, url, {
+                width: 300,
+                margin: 2
+            }, function (error) {
+                if (error) {
+                    console.error('QR-Code Fehler:', error);
+                    alert('Fehler beim Generieren des QR-Codes');
+                } else {
+                    console.log('QR-Code erfolgreich generiert für:', url);
+                }
+            });
+        }
+
+        // Initialisierung
+        document.addEventListener('DOMContentLoaded', function() {
+            generatePredefinedQRs();
+            generateCustomQR();
+        });
+    </script>
+</body>
+</html>

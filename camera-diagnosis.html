@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kamera-Diagnose Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-section {
+            background: white;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .success { color: #059669; font-weight: bold; }
+        .error { color: #DC2626; font-weight: bold; }
+        .warning { color: #D97706; font-weight: bold; }
+        button {
+            background: #3B82F6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #2563EB; }
+        video {
+            width: 100%;
+            max-width: 400px;
+            height: auto;
+            border: 2px solid #ccc;
+            border-radius: 5px;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 Kamera-Diagnose für QR-Code-Scanner</h1>
+    
+    <div class="test-section">
+        <h2>1. Browser-Kompatibilität</h2>
+        <div id="browser-check">Wird getestet...</div>
+    </div>
+    
+    <div class="test-section">
+        <h2>2. Sicherheitskontext (HTTPS/localhost)</h2>
+        <div id="security-check">Wird getestet...</div>
+    </div>
+    
+    <div class="test-section">
+        <h2>3. Verfügbare Kameras</h2>
+        <div id="devices-check">Wird getestet...</div>
+        <button onclick="listCameras()">🔄 Kameras neu auflisten</button>
+    </div>
+    
+    <div class="test-section">
+        <h2>4. Kamera-Berechtigungen</h2>
+        <div id="permission-check">Wird getestet...</div>
+        <button onclick="checkPermissions()">🔄 Berechtigungen prüfen</button>
+    </div>
+    
+    <div class="test-section">
+        <h2>5. Kamera-Test</h2>
+        <div id="camera-test">Bereit zum Testen</div>
+        <button onclick="testCamera()">📷 Kamera testen</button>
+        <button onclick="stopCamera()" style="background: #DC2626;">⏹️ Stoppen</button>
+        <br><br>
+        <video id="testVideo" style="display: none;"></video>
+    </div>
+    
+    <div class="test-section">
+        <h2>6. Debugging-Log</h2>
+        <button onclick="clearLog()">🗑️ Log löschen</button>
+        <pre id="debug-log"></pre>
+    </div>
+
+    <script>
+        let currentStream = null;
+        
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logElement = document.getElementById('debug-log');
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : type === 'warning' ? '⚠️' : 'ℹ️';
+            logElement.textContent += `[${timestamp}] ${prefix} ${message}\n`;
+            logElement.scrollTop = logElement.scrollHeight;
+            console.log(`[Camera Test] ${message}`);
+        }
+        
+        function clearLog() {
+            document.getElementById('debug-log').textContent = '';
+        }
+        
+        async function checkBrowserSupport() {
+            const element = document.getElementById('browser-check');
+            
+            if (!navigator.mediaDevices) {
+                element.innerHTML = '<span class="error">❌ MediaDevices API nicht unterstützt</span>';
+                log('MediaDevices API nicht verfügbar', 'error');
+                return false;
+            }
+            
+            if (!navigator.mediaDevices.getUserMedia) {
+                element.innerHTML = '<span class="error">❌ getUserMedia nicht unterstützt</span>';
+                log('getUserMedia nicht verfügbar', 'error');
+                return false;
+            }
+            
+            element.innerHTML = '<span class="success">✅ Browser unterstützt Kamera-API</span>';
+            log('Browser-Unterstützung: OK', 'success');
+            return true;
+        }
+        
+        function checkSecurityContext() {
+            const element = document.getElementById('security-check');
+            const isSecure = location.protocol === 'https:' || 
+                           location.hostname === 'localhost' || 
+                           location.hostname === '127.0.0.1';
+            
+            if (isSecure) {
+                element.innerHTML = `<span class="success">✅ Sicher (${location.protocol}//${location.hostname})</span>`;
+                log(`Sicherheitskontext: OK (${location.href})`, 'success');
+                return true;
+            } else {
+                element.innerHTML = `<span class="error">❌ Unsicher (${location.protocol}//${location.hostname})</span><br>
+                                   <small>Kamera-Zugriff erfordert HTTPS oder localhost</small>`;
+                log(`Sicherheitskontext: FEHLER (${location.href})`, 'error');
+                return false;
+            }
+        }
+        
+        async function listCameras() {
+            const element = document.getElementById('devices-check');
+            
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                
+                if (videoDevices.length === 0) {
+                    element.innerHTML = '<span class="error">❌ Keine Kameras gefunden</span>';
+                    log('Keine Video-Geräte gefunden', 'error');
+                    return;
+                }
+                
+                let html = `<span class="success">✅ ${videoDevices.length} Kamera(s) gefunden:</span><ul>`;
+                videoDevices.forEach((device, index) => {
+                    html += `<li><strong>${index + 1}:</strong> ${device.label || 'Unbekannte Kamera'} (${device.deviceId.substring(0, 20)}...)</li>`;
+                    log(`Kamera ${index + 1}: ${device.label || 'Unbekannt'} (${device.deviceId})`, 'info');
+                });
+                html += '</ul>';
+                element.innerHTML = html;
+                
+            } catch (error) {
+                element.innerHTML = `<span class="error">❌ Fehler: ${error.message}</span>`;
+                log(`Geräte-Auflistung fehlgeschlagen: ${error.message}`, 'error');
+            }
+        }
+        
+        async function checkPermissions() {
+            const element = document.getElementById('permission-check');
+            
+            try {
+                if (!navigator.permissions) {
+                    element.innerHTML = '<span class="warning">⚠️ Permissions API nicht verfügbar</span>';
+                    log('Permissions API nicht verfügbar', 'warning');
+                    return;
+                }
+                
+                const permission = await navigator.permissions.query({ name: 'camera' });
+                
+                let status, className;
+                switch (permission.state) {
+                    case 'granted':
+                        status = '✅ Erlaubt';
+                        className = 'success';
+                        log('Kamera-Berechtigung: Erteilt', 'success');
+                        break;
+                    case 'denied':
+                        status = '❌ Verweigert';
+                        className = 'error';
+                        log('Kamera-Berechtigung: Verweigert', 'error');
+                        break;
+                    case 'prompt':
+                        status = '❓ Wird bei Bedarf abgefragt';
+                        className = 'warning';
+                        log('Kamera-Berechtigung: Prompt', 'warning');
+                        break;
+                    default:
+                        status = `❓ Unbekannt (${permission.state})`;
+                        className = 'warning';
+                        log(`Kamera-Berechtigung: Unbekannt (${permission.state})`, 'warning');
+                }
+                
+                element.innerHTML = `<span class="${className}">${status}</span>`;
+                
+            } catch (error) {
+                element.innerHTML = `<span class="error">❌ Fehler: ${error.message}</span>`;
+                log(`Berechtigungs-Check fehlgeschlagen: ${error.message}`, 'error');
+            }
+        }
+        
+        async function testCamera() {
+            const element = document.getElementById('camera-test');
+            const video = document.getElementById('testVideo');
+            
+            try {
+                element.innerHTML = '<span class="warning">🎥 Fordere Kamera-Zugriff an...</span>';
+                log('Fordere Kamera-Zugriff an...', 'info');
+                
+                currentStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        facingMode: 'environment',
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    } 
+                });
+                
+                video.srcObject = currentStream;
+                video.style.display = 'block';
+                await video.play();
+                
+                element.innerHTML = '<span class="success">✅ Kamera erfolgreich gestartet!</span>';
+                log('Kamera-Test: Erfolgreich', 'success');
+                
+                // Nach 5 Sekunden automatisch stoppen
+                setTimeout(() => {
+                    if (currentStream) {
+                        log('Auto-Stop nach 5 Sekunden', 'info');
+                        stopCamera();
+                    }
+                }, 5000);
+                
+            } catch (error) {
+                element.innerHTML = `<span class="error">❌ Fehler: ${error.message}</span>`;
+                log(`Kamera-Test fehlgeschlagen: ${error.name} - ${error.message}`, 'error');
+                
+                // Detaillierte Fehleranalyse
+                if (error.name === 'NotAllowedError') {
+                    log('Benutzer hat Berechtigung verweigert oder Browser blockiert Zugriff', 'error');
+                } else if (error.name === 'NotFoundError') {
+                    log('Keine Kamera gefunden oder nicht verfügbar', 'error');
+                } else if (error.name === 'NotReadableError') {
+                    log('Kamera wird von anderer Anwendung verwendet', 'error');
+                }
+            }
+        }
+        
+        function stopCamera() {
+            const element = document.getElementById('camera-test');
+            const video = document.getElementById('testVideo');
+            
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => {
+                    track.stop();
+                    log(`Track gestoppt: ${track.kind}`, 'info');
+                });
+                currentStream = null;
+            }
+            
+            video.style.display = 'none';
+            video.srcObject = null;
+            element.innerHTML = 'Kamera gestoppt';
+            log('Kamera gestoppt', 'info');
+        }
+        
+        // Auto-Tests beim Laden
+        window.onload = async function() {
+            log('=== Kamera-Diagnose gestartet ===', 'info');
+            
+            await checkBrowserSupport();
+            checkSecurityContext();
+            await listCameras();
+            await checkPermissions();
+            
+            log('=== Diagnose abgeschlossen ===', 'info');
+            log('Klicken Sie auf "Kamera testen" um den Zugriff zu testen', 'info');
+        };
+    </script>
+</body>
+</html>

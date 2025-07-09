@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code ZXing Verification</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f0f0f0;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 2px solid #ddd;
+            border-radius: 10px;
+        }
+        .success { border-color: #4CAF50; background: #f8fff8; }
+        .error { border-color: #f44336; background: #fff8f8; }
+        .info { border-color: #2196F3; background: #f8f9ff; }
+        button {
+            padding: 12px 24px;
+            margin: 10px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            background: #4CAF50;
+            color: white;
+        }
+        button:hover { background: #45a049; }
+        .log {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 14px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        #qrCanvas {
+            border: 2px solid #333;
+            margin: 10px;
+        }
+    </style>
+    <script src="https://unpkg.com/@zxing/library@latest/umd/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 QR Code ZXing Verification Test</h1>
+        
+        <div class="test-section info">
+            <h2>📋 Test Overview</h2>
+            <p>This test verifies that ZXing can properly detect QR codes using the same method as our app.</p>
+            <p><strong>Method:</strong> Create QR → Canvas → Image Element → ZXing decodeFromImageElement</p>
+        </div>
+        
+        <div class="test-section">
+            <h2>🎯 Generated Test QR Code</h2>
+            <canvas id="qrCanvas" width="200" height="200"></canvas>
+            <div>
+                <strong>Content:</strong> <span id="qrContent">http://localhost:5173/#/order/TEST001</span>
+            </div>
+        </div>
+        
+        <div class="test-section">
+            <h2>🧪 ZXing Tests</h2>
+            <button onclick="generateTestQR()">Regenerate QR Code</button>
+            <button onclick="generateManualQRPattern()">Generate Test Pattern</button>
+            <button onclick="testZXingBasic()">Test ZXing Basic</button>
+            <button onclick="testZXingWithCanvas()">Test ZXing with Canvas</button>
+            <button onclick="testZXingWithImageElement()">Test ZXing with Image Element</button>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+        
+        <div class="test-section">
+            <h2>📊 Test Results</h2>
+            <div id="log" class="log">Ready for testing...\n</div>
+        </div>
+    </div>
+
+    <script>
+        let codeReader;
+        
+        function log(message) {
+            const logElement = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logElement.textContent += `[${timestamp}] ${message}\n`;
+            logElement.scrollTop = logElement.scrollHeight;
+            console.log(message);
+        }
+        
+        function clearLog() {
+            document.getElementById('log').textContent = 'Log cleared...\n';
+        }
+        
+        // Initialize ZXing
+        try {
+            codeReader = new ZXing.BrowserMultiFormatReader();
+            log('✅ ZXing BrowserMultiFormatReader initialized successfully');
+        } catch (error) {
+            log(`❌ ZXing initialization failed: ${error}`);
+        }
+        
+        // Generate test QR code
+        function generateTestQR() {
+            const canvas = document.getElementById('qrCanvas');
+            const content = document.getElementById('qrContent').textContent;
+            
+            log('🔧 Generating test QR code...');
+            log(`📄 Content: ${content}`);
+            
+            if (!window.QRCode) {
+                log('❌ QRCode library not loaded');
+                // Fallback: Draw a simple pattern
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, 200, 200);
+                ctx.fillStyle = 'black';
+                ctx.font = '16px Arial';
+                ctx.fillText('QR CODE', 60, 100);
+                ctx.fillText('FALLBACK', 55, 120);
+                log('⚠️ Using fallback pattern instead of real QR code');
+                return;
+            }
+            
+            QRCode.toCanvas(canvas, content, {
+                width: 200,
+                margin: 2,
+                color: {
+                    dark: '#000000',
+                    light: '#FFFFFF'
+                }
+            }, function (error) {
+                if (error) {
+                    log(`❌ QR generation error: ${error}`);
+                    // Fallback pattern
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = 'red';
+                    ctx.fillRect(0, 0, 200, 200);
+                    ctx.fillStyle = 'white';
+                    ctx.font = '14px Arial';
+                    ctx.fillText('QR ERROR', 60, 100);
+                } else {
+                    log('✅ Test QR code generated successfully');
+                    log(`🎯 Canvas content: ${canvas.width}x${canvas.height}`);
+                }
+            });
+        }
+        
+        async function testZXingBasic() {
+            if (!codeReader) {
+                log('❌ ZXing not initialized');
+                return;
+            }
+            
+            log('🧪 Testing ZXing basic functionality...');
+            
+            try {
+                // Test with empty canvas (should fail)
+                const testCanvas = document.createElement('canvas');
+                testCanvas.width = 100;
+                testCanvas.height = 100;
+                const ctx = testCanvas.getContext('2d');
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, 100, 100);
+                
+                const img = new Image();
+                img.onload = async () => {
+                    try {
+                        const result = await codeReader.decodeFromImageElement(img);
+                        log(`🎯 Unexpected success: ${result.getText()}`);
+                    } catch (error) {
+                        log(`✅ Expected failure (no QR in test image): ${error.name}`);
+                    }
+                };
+                img.src = testCanvas.toDataURL();
+                
+            } catch (error) {
+                log(`❌ Basic test error: ${error}`);
+            }
+        }
+        
+        async function testZXingWithCanvas() {
+            if (!codeReader) {
+                log('❌ ZXing not initialized');
+                return;
+            }
+            
+            log('🧪 Testing ZXing with generated QR canvas...');
+            
+            try {
+                const canvas = document.getElementById('qrCanvas');
+                const img = new Image();
+                
+                img.onload = async () => {
+                    try {
+                        const result = await codeReader.decodeFromImageElement(img);
+                        log(`🎯 SUCCESS! Detected QR: "${result.getText()}"`);
+                        log(`📍 Result points: ${result.getResultPoints()?.length || 0}`);
+                    } catch (error) {
+                        log(`❌ Canvas decode failed: ${error.name} - ${error.message}`);
+                    }
+                };
+                
+                img.onerror = () => {
+                    log('❌ Image load failed');
+                };
+                
+                img.src = canvas.toDataURL();
+                
+            } catch (error) {
+                log(`❌ Canvas test error: ${error}`);
+            }
+        }
+        
+        async function testZXingWithImageElement() {
+            if (!codeReader) {
+                log('❌ ZXing not initialized');
+                return;
+            }
+            
+            log('🧪 Testing ZXing with Image Element (multiple methods)...');
+            
+            try {
+                const canvas = document.getElementById('qrCanvas');
+                
+                // Test 1: Direct canvas as PNG
+                log('📝 Test 1: Direct canvas PNG...');
+                const img1 = new Image();
+                img1.onload = async () => {
+                    try {
+                        const result = await codeReader.decodeFromImageElement(img1);
+                        log(`🎯 Test 1 SUCCESS! PNG: "${result.getText()}"`);
+                    } catch (error) {
+                        log(`❌ Test 1 failed: ${error.name}`);
+                        
+                        // Test 2: Higher quality JPEG
+                        log('📝 Test 2: High quality JPEG...');
+                        const img2 = new Image();
+                        img2.onload = async () => {
+                            try {
+                                const result = await codeReader.decodeFromImageElement(img2);
+                                log(`🎯 Test 2 SUCCESS! JPEG: "${result.getText()}"`);
+                            } catch (error) {
+                                log(`❌ Test 2 failed: ${error.name}`);
+                                
+                                // Test 3: Larger size
+                                await testLargerQR();
+                            }
+                        };
+                        img2.src = canvas.toDataURL('image/jpeg', 1.0);
+                    }
+                };
+                img1.src = canvas.toDataURL('image/png');
+                
+            } catch (error) {
+                log(`❌ App method error: ${error}`);
+            }
+        }
+        
+        async function testLargerQR() {
+            log('📝 Test 3: Larger QR code (400x400)...');
+            
+            const largeCanvas = document.createElement('canvas');
+            largeCanvas.width = 400;
+            largeCanvas.height = 400;
+            
+            QRCode.toCanvas(largeCanvas, 'http://localhost:5173/#/order/TEST001', {
+                width: 400,
+                margin: 4,
+                color: {
+                    dark: '#000000',
+                    light: '#FFFFFF'
+                }
+            }, async function (error) {
+                if (error) {
+                    log(`❌ Large QR generation failed: ${error}`);
+                    return;
+                }
+                
+                const img3 = new Image();
+                img3.onload = async () => {
+                    try {
+                        const result = await codeReader.decodeFromImageElement(img3);
+                        log(`🎯 Test 3 SUCCESS! Large QR: "${result.getText()}"`);
+                    } catch (error) {
+                        log(`❌ Test 3 failed: ${error.name}`);
+                        await testWithHints();
+                    }
+                };
+                img3.src = largeCanvas.toDataURL('image/png');
+            });
+        }
+        
+        async function testWithHints() {
+            log('📝 Test 4: ZXing with decode hints...');
+            
+            try {
+                // Create a new reader with specific hints
+                const hintsMap = new Map();
+                hintsMap.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.QR_CODE]);
+                hintsMap.set(ZXing.DecodeHintType.TRY_HARDER, true);
+                
+                const hintReader = new ZXing.BrowserMultiFormatReader(hintsMap);
+                
+                const canvas = document.getElementById('qrCanvas');
+                const img4 = new Image();
+                img4.onload = async () => {
+                    try {
+                        const result = await hintReader.decodeFromImageElement(img4);
+                        log(`🎯 Test 4 SUCCESS! With hints: "${result.getText()}"`);
+                    } catch (error) {
+                        log(`❌ Test 4 failed: ${error.name}`);
+                        log('ℹ️ All ZXing tests failed - this indicates a fundamental issue');
+                        await testAlternativeLibrary();
+                    }
+                };
+                img4.src = canvas.toDataURL('image/png');
+                
+            } catch (error) {
+                log(`❌ Hints test error: ${error}`);
+                await testAlternativeLibrary();
+            }
+        }
+        
+        async function testAlternativeLibrary() {
+            log('📝 Test 5: Alternative - QR-Scanner library...');
+            
+            // Check if we can use a different approach
+            if (window.QrScanner) {
+                log('🔍 QR-Scanner library available');
+            } else {
+                log('ℹ️ QR-Scanner not available');
+            }
+            
+            // Test with jsQR if available
+            if (window.jsQR) {
+                log('🔍 jsQR library available');
+                const canvas = document.getElementById('qrCanvas');
+                const ctx = canvas.getContext('2d');
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                
+                const code = jsQR(imageData.data, imageData.width, imageData.height);
+                if (code) {
+                    log(`🎯 jsQR SUCCESS: "${code.data}"`);
+                } else {
+                    log('❌ jsQR also failed');
+                }
+            } else {
+                log('ℹ️ jsQR not available');
+                log('💡 Consider using a different QR detection library');
+            }
+        }
+        
+        // Generate QR code on page load
+        window.onload = function() {
+            log('🔧 Page loaded, checking libraries...');
+            log(`QRCode available: ${!!window.QRCode}`);
+            log(`ZXing available: ${!!window.ZXing}`);
+            log(`jsQR available: ${!!window.jsQR}`);
+            
+            generateTestQR();
+            
+            // Alternative QR generation if first fails
+            setTimeout(() => {
+                const canvas = document.getElementById('qrCanvas');
+                const ctx = canvas.getContext('2d');
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                
+                // Check if canvas is still empty/white
+                let isEmpty = true;
+                for (let i = 0; i < imageData.data.length; i += 4) {
+                    if (imageData.data[i] !== 255 || imageData.data[i + 1] !== 255 || imageData.data[i + 2] !== 255) {
+                        isEmpty = false;
+                        break;
+                    }
+                }
+                
+                if (isEmpty) {
+                    log('⚠️ Canvas is empty, generating manual QR pattern...');
+                    generateManualQRPattern();
+                }
+            }, 1000);
+        };
+        
+        function generateManualQRPattern() {
+            const canvas = document.getElementById('qrCanvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Clear canvas
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, 200, 200);
+            
+            // Draw a simple QR-like pattern for testing
+            ctx.fillStyle = 'black';
+            
+            // Corner markers
+            ctx.fillRect(10, 10, 30, 30);
+            ctx.fillRect(160, 10, 30, 30);
+            ctx.fillRect(10, 160, 30, 30);
+            
+            // Center marker
+            ctx.fillRect(85, 85, 30, 30);
+            
+            // Some random pattern
+            for (let x = 50; x < 150; x += 10) {
+                for (let y = 50; y < 150; y += 10) {
+                    if (Math.random() > 0.5) {
+                        ctx.fillRect(x, y, 8, 8);
+                    }
+                }
+            }
+            
+            log('✅ Manual QR-like pattern generated for testing');
+        }
+    </script>
+</body>
+</html>

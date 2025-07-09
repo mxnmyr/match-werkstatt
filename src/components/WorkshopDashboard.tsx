@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Clock, User, Eye, Filter, Search, Settings, ChevronRight, QrCode } from 'lucide-react';
+import { Clock, User, Eye, Filter, Search, Settings, QrCode } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import WorkshopOrderDetails from './WorkshopOrderDetails';
