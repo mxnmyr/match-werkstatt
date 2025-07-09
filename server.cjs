@@ -121,7 +121,6 @@ app.get('/api/orders', async (req, res) => {
             createdAt: 'desc',
           },
         },
-        titleImage: true, // Include the related image model
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -413,7 +412,6 @@ app.put('/api/orders/:id', async (req, res) => {
               createdAt: 'desc',
             },
           },
-          titleImage: true,
         },
       });
 
@@ -500,7 +498,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   res.json({ filename: req.file.filename, originalname: req.file.originalname });
 });
 
-// Endpunkt für Titelbild-Upload in die DB (neue Logik mit Image-Tabelle)
+// Endpunkt für Titelbild-Upload - Native MongoDB um Transaktions-Problem zu umgehen
 app.post('/api/orders/:id/upload-title-image', memoryUpload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -511,70 +509,46 @@ app.post('/api/orders/:id/upload-title-image', memoryUpload.single('file'), asyn
     const imageBuffer = req.file.buffer;
     const mimeType = req.file.mimetype;
 
-    // 1. Finde den Auftrag und prüfe, ob bereits ein Bild existiert
-    const existingOrder = await prisma.order.findUnique({
-      where: { id: orderId },
-      select: { titleImageId: true }
-    });
+    // Konvertiere Bild zu Base64 für direkte Speicherung im Order
+    const base64Image = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
 
-    if (!existingOrder) {
-      return res.status(404).json({ error: 'Auftrag nicht gefunden.' });
-    }
+    console.log(`Uploading title image for order ${orderId}, size: ${imageBuffer.length} bytes, type: ${mimeType}`);
 
-    // 2. Wenn ein altes Bild existiert, lösche es.
-    // Die Kaskadierung sollte das beim Ersetzen des Links eigentlich tun, aber zur Sicherheit...
-    if (existingOrder.titleImageId) {
-      await prisma.image.delete({ where: { id: existingOrder.titleImageId }});
-    }
-
-    // 3. Erstelle den neuen Bildeintrag
-    const newImage = await prisma.image.create({
-      data: {
-        mimeType: mimeType,
-        data: imageBuffer,
+    // Verwende native MongoDB-Update anstatt Prisma um Transaktions-Problem zu umgehen
+    const { MongoClient, ObjectId } = require('mongodb');
+    const mongoClient = new MongoClient(process.env.DATABASE_URL || 'mongodb://localhost:27017/matchdb');
+    
+    try {
+      await mongoClient.connect();
+      const db = mongoClient.db('matchdb');
+      const ordersCollection = db.collection('Order');
+      
+      // Einfaches MongoDB Update ohne Transaktionen
+      const updateResult = await ordersCollection.updateOne(
+        { _id: new ObjectId(orderId) },
+        { $set: { titleImage: base64Image, updatedAt: new Date() } }
+      );
+      
+      if (updateResult.matchedCount === 0) {
+        return res.status(404).json({ error: 'Auftrag nicht gefunden.' });
       }
-    });
-
-    // 4. Verknüpfe das neue Bild mit dem Auftrag
-    const updatedOrder = await prisma.order.update({
-      where: { id: orderId },
-      data: {
-        titleImageId: newImage.id
-      },
-      include: { 
-        documents: true,
-        components: {
-          include: {
-            documents: true
-          }
-        },
-        noteHistory: true,
-        titleImage: true
-       },
-    });
-
-    // WebSocket-Broadcast für sofortiges Update
-    const allOrders = await prisma.order.findMany({
-      include: {
-        documents: true,
-        components: {
-          include: {
-            documents: true
-          }
-        },
-        noteHistory: {
-          orderBy: {
-            createdAt: 'desc',
-          },
-        },
-        titleImage: true,
-      },
-    });
-    broadcast('ordersUpdated', allOrders);
-
-    // Nur die notwendigen Daten zurücksenden, nicht das ganze Bild
-    const { titleImage, ...orderWithoutImage } = updatedOrder;
-    res.json({ ...orderWithoutImage, titleImage: { id: updatedOrder.titleImage.id } }); // Nur die ID zurückgeben
+      
+      console.log(`Title image uploaded successfully for order ${orderId}`);
+      
+      // Hole aktualisierte Orders für Broadcast
+      const allOrders = await prisma.order.findMany();
+      broadcast('ordersUpdated', allOrders);
+      
+      // Erfolgsantwort
+      res.json({ 
+        success: true,
+        orderId: orderId,
+        titleImageUploaded: true
+      });
+      
+    } finally {
+      await mongoClient.close();
+    }
 
   } catch (err) {
     console.error('Error uploading title image:', err);
@@ -583,19 +557,32 @@ app.post('/api/orders/:id/upload-title-image', memoryUpload.single('file'), asyn
 });
 
 // Endpunkt zum Abrufen des Titelbildes (neue Logik mit Image-Tabelle)
+// Endpunkt zum Abrufen des Titelbildes - Vereinfachte Version mit Base64
 app.get('/api/orders/:id/title-image', async (req, res) => {
   try {
     const order = await prisma.order.findUnique({
       where: { id: req.params.id },
-      include: { titleImage: true },
+      select: { titleImage: true }
     });
 
     if (!order || !order.titleImage) {
       return res.status(404).send('Bild nicht gefunden');
     }
 
-    res.setHeader('Content-Type', order.titleImage.mimeType || 'application/octet-stream');
-    res.send(order.titleImage.data);
+    // Base64-Bild direkt zurückgeben
+    if (order.titleImage.startsWith('data:')) {
+      // Extrahiere MIME-Type und Base64-Daten
+      const [mimeInfo, base64Data] = order.titleImage.split(',');
+      const mimeType = mimeInfo.match(/data:([^;]+)/)?.[1] || 'application/octet-stream';
+      
+      // Konvertiere Base64 zu Buffer
+      const imageBuffer = Buffer.from(base64Data, 'base64');
+      
+      res.setHeader('Content-Type', mimeType);
+      res.send(imageBuffer);
+    } else {
+      res.status(400).send('Ungültiges Bildformat');
+    }
   } catch (err) {
     console.error('Error fetching title image:', err);
     res.status(500).json({ error: 'Fehler beim Abrufen des Bildes.' });
@@ -703,7 +690,6 @@ app.get('/api/orders/barcode/:code', async (req, res) => {
             createdAt: 'desc',
           },
         },
-        titleImage: true,
       },
     });
 

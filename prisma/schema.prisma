@@ -41,17 +41,8 @@ model Order {
   materialOrderedByClientConfirmed Boolean? @default(false)
   materialAvailable         Boolean? @default(false)
 
-  // Relation zum Titelbild
-  titleImage   Image? @relation(fields: [titleImageId], references: [id])
-  titleImageId String? @unique @db.ObjectId
-}
-
-model Image {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  mimeType  String
-  data      Bytes
-  order     Order?
-  createdAt DateTime @default(now())
+  // Titelbild als Base64-String (vereinfacht, ohne separate Image-Tabelle)
+  titleImage     String? // Base64-encoded image data
 }
 
 model Document {

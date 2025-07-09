@@ -19,15 +19,35 @@ export default function WorkshopDashboard() {
   const [viewMode, setViewMode] = useState<'all' | 'assigned'>('all');
   const [showArchive, setShowArchive] = useState(false);
   const [showCreateOrder, setShowCreateOrder] = useState(false);
-  const [orders, setOrders] = useState<Order[]>(state.orders);
+  const [orders, setOrders] = useState<Order[]>(Array.isArray(state.orders) ? state.orders : []);
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
 
   // Orders nach jedem Öffnen/Schließen des Modals neu laden
   const fetchOrders = async () => {
-    const res = await fetch('http://localhost:3001/api/orders');
-    const data = await res.json();
-    setOrders(data);
-    if (dispatch) dispatch({ type: 'LOAD_ORDERS', payload: data });
+    try {
+      const res = await fetch('http://localhost:3001/api/orders');
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+      const data = await res.json();
+      // Stelle sicher, dass data ein Array ist
+      if (Array.isArray(data)) {
+        setOrders(data);
+        if (dispatch) dispatch({ type: 'LOAD_ORDERS', payload: data });
+      } else {
+        console.error('API returned non-array data:', data);
+        setOrders([]); // Fallback zu leerem Array
+      }
+    } catch (error) {
+      console.error('Fehler beim Laden der Aufträge:', error);
+      setOrders([]); // Fallback zu leerem Array bei Fehler
+      if (dispatch) {
+        dispatch({
+          type: 'SHOW_NOTIFICATION',
+          payload: { message: 'Fehler beim Laden der Aufträge', type: 'error' }
+        });
+      }
+    }
   };
 
   // QR-Code-Scanner Handler
@@ -94,6 +114,12 @@ export default function WorkshopDashboard() {
 
   // Filter orders based on user role and view mode
   const getFilteredOrders = () => {
+    // Stelle sicher, dass orders ein Array ist
+    if (!Array.isArray(orders)) {
+      console.warn('orders is not an array:', orders);
+      return [];
+    }
+    
     let filtered = orders.filter(order =>
       typeof order.status === 'string' && order.status.trim().toLowerCase() !== 'archived'
     );
