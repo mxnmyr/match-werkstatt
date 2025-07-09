@@ -34,6 +34,8 @@ model Order {
   confirmationDate DateTime?
   canEdit          Boolean?      @default(false)
   noteHistory      NoteHistory[]
+  networkPath      String?       // Pfad zum Netzwerkordner
+  networkFolderCreated Boolean?  @default(false) // Status der Netzwerkordner-Erstellung
 
   // Materialstatus-Felder
   materialOrderedByWorkshop Boolean? @default(false)
@@ -90,4 +92,13 @@ model ComponentDocument {
   uploadDate  DateTime
   component   Component @relation(fields: [componentId], references: [id])
   componentId String    @db.ObjectId
+}
+
+model SystemConfig {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  key         String    @unique
+  value       String
+  description String?
+  updatedAt   DateTime  @default(now())
+  updatedBy   String?   // User ID, der die Änderung vorgenommen hat
 }

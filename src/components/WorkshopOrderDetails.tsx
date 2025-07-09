@@ -11,11 +11,14 @@ import {
   Archive,
   Download,
   Upload,
-  Printer
+  Printer,
+  Server
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Order, SubTask, PDFDocument, RevisionComment, NoteHistory } from '../types';
 import OrderPDFGenerator from '../utils/OrderPDFGenerator';
+import NetworkFolderStatus from './NetworkFolderStatus';
+import NetworkFileUpload from './NetworkFileUpload';
 
 interface WorkshopOrderDetailsProps {
   order: Order;
@@ -44,6 +47,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   const [revisionError, setRevisionError] = useState('');
   const [titleImageUrl, setTitleImageUrl] = useState('');
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const [showNetworkFolder, setShowNetworkFolder] = useState(false);
 
   // Zustand für bearbeitete Felder
   const [changedFields, setChangedFields] = useState<Partial<Order>>({});
@@ -487,6 +491,14 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
           </div>
           <div className="flex items-center gap-2">
             <button
+              onClick={() => setShowNetworkFolder(true)}
+              className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors flex items-center"
+              title="Netzwerkordner verwalten"
+            >
+              <Server className="w-4 h-4 mr-2" />
+              Netzwerkordner
+            </button>
+            <button
               onClick={handlePrintOrder}
               disabled={isGeneratingPDF}
               className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:bg-gray-400 transition-colors flex items-center"
@@ -572,6 +584,15 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                     <span className="text-sm font-medium text-gray-900">{localOrder.priority}</span>
                   </div>
                 </div>
+              </div>
+
+              {/* Netzwerkordner-Status */}
+              <div className="mt-4">
+                <h4 className="text-md font-semibold text-gray-900 mb-2">Netzwerkordner-Status</h4>
+                <NetworkFolderStatus 
+                  orderId={localOrder.id}
+                  orderNumber={localOrder.orderNumber}
+                />
               </div>
 
               <div>
@@ -982,30 +1003,40 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     PDF Dokumente für Unteraufgabe
                   </label>
-                  <div
-                    className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
-                      dragActive
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-gray-300 hover:border-gray-400'
-                    }`}
-                    onDragEnter={handleDrag}
-                    onDragLeave={handleDrag}
-                    onDragOver={handleDrag}
-                    onDrop={handleDrop}
-                  >
-                    <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                    <p className="text-gray-600 text-sm mb-2">PDF-Dateien hier ablegen oder</p>
-                    <label className="cursor-pointer">
-                      <input
-                        type="file"
-                        accept="application/pdf"
-                        multiple
-                        className="hidden"
-                        onChange={e => handleFileUpload(e.target.files)}
-                      />
-                      <span className="text-blue-600 underline">Dateien auswählen</span>
-                    </label>
-                  </div>
+                  
+                  {/* New Network File Upload Component */}
+                  <NetworkFileUpload
+                    orderId={localOrder.id}
+                    uploadType="document"
+                    onUploadSuccess={(result) => {
+                      // Add document to local state
+                      const newDoc: PDFDocument = {
+                        id: result.documentId || `doc_${Date.now()}`,
+                        name: result.originalname,
+                        url: `/uploads/${result.filename}`,
+                        uploadDate: new Date()
+                      };
+                      setSubTaskDocuments(prev => [...prev, newDoc]);
+                      
+                      dispatch({
+                        type: 'SHOW_NOTIFICATION',
+                        payload: {
+                          message: 'Dokument erfolgreich hochgeladen',
+                          type: 'success'
+                        }
+                      });
+                    }}
+                    onUploadError={(error) => {
+                      dispatch({
+                        type: 'SHOW_NOTIFICATION',
+                        payload: {
+                          message: `Fehler beim Hochladen: ${error.message}`,
+                          type: 'error'
+                        }
+                      });
+                    }}
+                  />
+                  
                   {/* Show uploaded files */}
                   {subTaskDocuments.length > 0 && (
                     <div className="mt-2 space-y-1">
@@ -1252,6 +1283,64 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
           </div>
         </div>
       )}
+
+      {/* Netzwerkordner Modal */}
+      {showNetworkFolder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-lg max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold">Netzwerkordner für Auftrag {localOrder.orderNumber}</h2>
+              <button 
+                onClick={() => setShowNetworkFolder(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <NetworkFolderStatus 
+              orderId={localOrder.id} 
+              orderNumber={localOrder.orderNumber}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* CAM-Dateien Upload Bereich */}
+      <div className="mt-6 border-t pt-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">CAM-Dateien</h3>
+        <NetworkFileUpload
+          orderId={localOrder.id}
+          uploadType="cam"
+          onUploadSuccess={(result) => {
+            dispatch({
+              type: 'SHOW_NOTIFICATION',
+              payload: {
+                message: 'CAM-Datei erfolgreich hochgeladen',
+                type: 'success'
+              }
+            });
+            
+            // Optional: Reload order oder hinzufügen zur lokalen Dokumentenliste
+            fetch(`http://localhost:3001/api/orders/${localOrder.id}`)
+              .then(response => response.json())
+              .then(data => {
+                setLocalOrder(data);
+              })
+              .catch(error => {
+                console.error('Error reloading order:', error);
+              });
+          }}
+          onUploadError={(error) => {
+            dispatch({
+              type: 'SHOW_NOTIFICATION',
+              payload: {
+                message: `Fehler beim Hochladen der CAM-Datei: ${error.message}`,
+                type: 'error'
+              }
+            });
+          }}
+        />
+      </div>
     </div>
   );
 }

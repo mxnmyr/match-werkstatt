@@ -6,16 +6,192 @@ const multer = require('multer');
 const http = require('http');
 const WebSocket = require('ws');
 const { PrismaClient } = require('@prisma/client');
+const { MongoClient, ObjectId } = require('mongodb');
 
 const app = express();
 const PORT = 3001;
 const prisma = new PrismaClient();
+
+// MongoDB client for direct operations (to avoid replica set issues with Prisma)
+const mongoClient = new MongoClient(process.env.DATABASE_URL || 'mongodb://localhost:27017/matchdb');
+let db;
+
+// Initialize MongoDB connection
+async function initMongoDB() {
+  try {
+    await mongoClient.connect();
+    db = mongoClient.db('matchdb');
+    console.log('✓ Direct MongoDB connection established');
+  } catch (error) {
+    console.error('✗ Failed to connect to MongoDB:', error);
+  }
+}
+
+initMongoDB();
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 const uploadsDir = path.join(__dirname, 'storage', 'uploads');
+
+// === NETZWERKORDNER-KONFIGURATION ===
+// PLATZHALTER: Hier wird später der tatsächliche Netzwerkpfad eingetragen
+// Beispiele für Windows-Netzwerkpfade:
+// - '\\\\SERVER-NAME\\SharedFolder\\Auftraege'
+// - '\\\\192.168.1.100\\auftraege$'
+// - 'Z:\\Auftraege' (wenn Netzlaufwerk gemappt ist)
+const NETWORK_BASE_PATH = process.env.NETWORK_BASE_PATH || 'PLATZHALTER_NETZWERKPFAD';
+
+// Hilfsfunktion: Netzwerkordner für Auftrag erstellen
+async function createNetworkOrderFolder(orderNumber, orderId) {
+  try {
+    // Hole den aktuellen Netzwerkpfad aus der Datenbank (direkt über MongoDB)
+    let networkPathConfig = null;
+    if (db) {
+      try {
+        networkPathConfig = await db.collection('SystemConfig').findOne({
+          key: 'NETWORK_BASE_PATH'
+        });
+      } catch (dbError) {
+        console.warn('[WARN] Could not fetch network path from database:', dbError.message);
+      }
+    }
+    
+    // Verwende den Wert aus der Datenbank oder den Standardwert
+    const currentNetworkPath = networkPathConfig?.value || NETWORK_BASE_PATH;
+    
+    // Prüfe ob Netzwerkpfad konfiguriert ist
+    if (currentNetworkPath === 'PLATZHALTER_NETZWERKPFAD') {
+      console.log(`[INFO] Netzwerkpfad nicht konfiguriert. Ordner würde erstellt werden für: ${orderNumber}`);
+      return { success: false, message: 'Netzwerkpfad nicht konfiguriert' };
+    }
+
+    // Erstelle sicheren Ordnernamen (entferne ungültige Zeichen)
+    const safeFolderName = `${orderNumber || orderId}`.replace(/[<>:"|?*]/g, '_');
+    const orderFolderPath = path.join(currentNetworkPath, safeFolderName);
+    
+    // Prüfe ob Hauptnetzwerkpfad existiert
+    if (!fs.existsSync(currentNetworkPath)) {
+      console.error(`[ERROR] Netzwerkpfad nicht erreichbar: ${currentNetworkPath}`);
+      return { success: false, message: 'Netzwerkpfad nicht erreichbar' };
+    }
+    
+    // Erstelle Auftragsordner wenn nicht vorhanden
+    if (!fs.existsSync(orderFolderPath)) {
+      fs.mkdirSync(orderFolderPath, { recursive: true });
+      console.log(`[SUCCESS] Netzwerkordner erstellt: ${orderFolderPath}`);
+      
+      // Erstelle Unterordner-Struktur
+      const subFolders = [
+        'CAD_CAM',                   // CAD/CAM-Dateien
+        'Zeichnungen',               // Technische Zeichnungen
+        'Dokumentation',             // Technische Dokumentation, Anleitungen, etc.
+        'Bilder',                    // Fotos und Bilder
+        'Bauteile',                  // Hauptordner für Bauteile
+        'Dokumente',                 // Sonstige Dokumente
+        'Archiv'                     // Archivierte Dateien
+      ];
+      
+      subFolders.forEach(folder => {
+        const subFolderPath = path.join(orderFolderPath, folder);
+        fs.mkdirSync(subFolderPath, { recursive: true });
+      });
+      
+      console.log(`[SUCCESS] Unterordner erstellt für Auftrag: ${safeFolderName}`);
+      
+      // Migration bestehender Dateien durchführen
+      const migrationResult = await migrateExistingFilesToNetworkFolder(orderId, orderFolderPath);
+      if (migrationResult.success) {
+        console.log(`[SUCCESS] Dateimigration abgeschlossen: ${migrationResult.message}`);
+      } else {
+        console.warn(`[WARN] Probleme bei der Dateimigration: ${migrationResult.message}`);
+      }
+      
+      // Aktualisiere die Datenbank mit dem Netzwerkpfad
+      try {
+        await prisma.order.update({
+          where: { id: orderId },
+          data: {
+            networkPath: orderFolderPath,
+            networkFolderCreated: true
+          }
+        });
+        console.log(`[SUCCESS] Datenbank mit Netzwerkpfad aktualisiert für Auftrag: ${orderId}`);
+      } catch (dbError) {
+        console.error('[ERROR] Fehler beim Aktualisieren des Netzwerkpfads in der Datenbank:', dbError);
+      }
+      
+      return { 
+        success: true, 
+        path: orderFolderPath, 
+        message: 'Netzwerkordner erfolgreich erstellt',
+        migrationResult: migrationResult
+      };
+    } else {
+      console.log(`[INFO] Netzwerkordner existiert bereits: ${orderFolderPath}`);
+      
+      // Prüfen, ob Unterordner existieren, ggf. erstellen
+      const subFolders = [
+        'CAD_CAM',                   // CAD/CAM-Dateien
+        'Zeichnungen',               // Technische Zeichnungen
+        'Dokumentation',             // Technische Dokumentation, Anleitungen, etc.
+        'Bilder',                    // Fotos und Bilder
+        'Bauteile',                  // Hauptordner für Bauteile
+        'Dokumente',                 // Sonstige Dokumente
+        'Archiv'                     // Archivierte Dateien
+      ];
+      
+      for (const folder of subFolders) {
+        const subFolderPath = path.join(orderFolderPath, folder);
+        if (!fs.existsSync(subFolderPath)) {
+          fs.mkdirSync(subFolderPath, { recursive: true });
+          console.log(`[INFO] Fehlender Unterordner erstellt: ${subFolderPath}`);
+        }
+      }
+      
+      // Migration bestehender Dateien auch für bereits existierende Ordner durchführen
+      const migrationResult = await migrateExistingFilesToNetworkFolder(orderId, orderFolderPath);
+      if (migrationResult.success) {
+        console.log(`[SUCCESS] Dateimigration abgeschlossen: ${migrationResult.message}`);
+      } else {
+        console.warn(`[WARN] Probleme bei der Dateimigration: ${migrationResult.message}`);
+      }
+      
+      // Aktualisiere die Datenbank mit dem Netzwerkpfad (falls noch nicht gesetzt)
+      try {
+        const order = await prisma.order.findUnique({
+          where: { id: orderId },
+          select: { networkFolderCreated: true }
+        });
+        
+        if (!order?.networkFolderCreated) {
+          await prisma.order.update({
+            where: { id: orderId },
+            data: {
+              networkPath: orderFolderPath,
+              networkFolderCreated: true
+            }
+          });
+          console.log(`[SUCCESS] Datenbank mit Netzwerkpfad aktualisiert für Auftrag: ${orderId}`);
+        }
+      } catch (dbError) {
+        console.error('[ERROR] Fehler beim Aktualisieren des Netzwerkpfads in der Datenbank:', dbError);
+      }
+      
+      return { 
+        success: true, 
+        path: orderFolderPath, 
+        message: 'Netzwerkordner bereits vorhanden', 
+        migrationResult: migrationResult
+      };
+    }
+    
+  } catch (error) {
+    console.error(`[ERROR] Fehler beim Erstellen des Netzwerkordners:`, error);
+    return { success: false, message: `Fehler: ${error.message}` };
+  }
+}
 
 // Ensure storage files exist
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -247,6 +423,10 @@ app.post('/api/orders', async (req, res) => {
     
     await mongoClient2.close();
     
+    // === NETZWERKORDNER FÜR AUFTRAG ERSTELLEN ===
+    const networkResult = await createNetworkOrderFolder(auftragsnummer, result.insertedId.toString());
+    console.log(`[NETWORK] Netzwerkordner-Erstellung für ${auftragsnummer}:`, networkResult);
+    
     // Hole den erstellten Auftrag über Prisma zurück
     const order = await prisma.order.findUnique({
       where: { id: result.insertedId.toString() },
@@ -465,6 +645,7 @@ app.delete('/api/orders/:id', async (req, res) => {
 });
 
 // --- FILE UPLOADS (Metadaten in DB) ---
+// Standard-Upload (wie bisher für allgemeine Dateien)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     console.log('MULTER destination:', uploadsDir);
@@ -486,6 +667,76 @@ const storage = multer.diskStorage({
   }
 });
 const upload = multer({ storage });
+
+// Erweiterte Upload-Konfiguration für Netzwerkordner
+const createNetworkStorage = (subFolder = '') => {
+  return multer.diskStorage({
+    destination: async (req, file, cb) => {
+      try {
+        let targetPath = uploadsDir; // Fallback zu lokalem Ordner
+        
+        // Versuche, den Netzwerkordner zu verwenden
+        const { orderId, componentId } = req.params;
+        if (orderId) {
+          // Lade Auftrag
+          const order = await prisma.order.findUnique({
+            where: { id: orderId },
+            select: { orderNumber: true, networkPath: true, networkFolderCreated: true }
+          });
+          
+          if (order) {
+            // Erstelle oder hole Netzwerkordner
+            const networkResult = await createNetworkOrderFolder(order.orderNumber, orderId);
+            
+            if (networkResult.success && networkResult.path) {
+              if (componentId) {
+                // Speichere in Bauteil-Unterordner
+                targetPath = path.join(networkResult.path, 'Bauteile', componentId);
+              } else if (subFolder) {
+                // Speichere in spezifischen Unterordner
+                targetPath = path.join(networkResult.path, subFolder);
+              } else {
+                // Speichere in allgemeinen Dokumenten-Ordner
+                targetPath = path.join(networkResult.path, 'Dokumentation');
+              }
+              
+              // Erstelle den Zielordner falls er nicht existiert
+              if (!fs.existsSync(targetPath)) {
+                fs.mkdirSync(targetPath, { recursive: true });
+                console.log(`[DEBUG] Created directory: ${targetPath}`);
+              }
+            }
+          }
+        }
+        
+        console.log(`[DEBUG] MULTER network destination: ${targetPath}`);
+        cb(null, targetPath);
+      } catch (error) {
+        console.error('[ERROR] MULTER destination error:', error);
+        cb(null, uploadsDir); // Fallback zu lokalem Ordner
+      }
+    },
+    filename: (req, file, cb) => {
+      // Bereinige Dateinamen für Netzwerkordner
+      const ext = path.extname(file.originalname);
+      const base = path.basename(file.originalname, ext).replace(/[<>:"|?*]/g, '_');
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
+      const finalName = `${base}_${timestamp}${ext}`;
+      
+      console.log('MULTER network filename:', {
+        originalname: file.originalname,
+        finalName
+      });
+      cb(null, finalName);
+    }
+  });
+};
+
+// Verschiedene Upload-Konfigurationen
+const networkUpload = multer({ storage: createNetworkStorage() });
+const camFilesUpload = multer({ storage: createNetworkStorage('CAM-Dateien') });
+const drawingsUpload = multer({ storage: createNetworkStorage('Zeichnungen') });
+const photosUpload = multer({ storage: createNetworkStorage('Fotos') });
 
 // Multer-Konfiguration für In-Memory-Speicherung (für DB-Upload)
 const memoryUpload = multer({ storage: multer.memoryStorage() });
@@ -706,24 +957,810 @@ app.get('/api/orders/barcode/:code', async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`Backend listening on http://localhost:${PORT}`);
-  console.log(`WebSocket server running on ws://localhost:${PORT}`);
+// API zum manuellen Migrieren von Dateien in den Netzwerkordner
+app.post('/api/orders/:orderId/migrate-files', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    // Prüfe ob Auftrag existiert
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { 
+        id: true, 
+        orderNumber: true, 
+        networkPath: true, 
+        networkFolderCreated: true 
+      }
+    });
+    
+    if (!order) {
+      return res.status(404).json({ error: 'Auftrag nicht gefunden' });
+    }
+    
+    // Wenn kein Netzwerkordner existiert, erstelle ihn zuerst
+    if (!order.networkFolderCreated) {
+      const folderResult = await createNetworkOrderFolder(order.orderNumber, orderId);
+      if (!folderResult.success) {
+        return res.status(500).json({ 
+          error: 'Netzwerkordner konnte nicht erstellt werden', 
+          details: folderResult.message 
+        });
+      }
+      
+      res.json({
+        success: true,
+        message: 'Netzwerkordner erstellt und Dateien migriert',
+        folderPath: folderResult.path,
+        migrationResult: folderResult.migrationResult
+      });
+    } else {
+      // Wenn der Ordner bereits existiert, führe nur die Migration durch
+      const networkPath = order.networkPath;
+      if (!networkPath) {
+        return res.status(500).json({ error: 'Netzwerkpfad nicht gesetzt obwohl Ordner als erstellt markiert ist' });
+      }
+      
+      const migrationResult = await migrateExistingFilesToNetworkFolder(orderId, networkPath);
+      
+      res.json({
+        success: true,
+        message: 'Dateien in existierenden Netzwerkordner migriert',
+        folderPath: networkPath,
+        migrationResult
+      });
+    }
+  } catch (error) {
+    console.error('[ERROR] Fehler bei manueller Dateimigration:', error);
+    res.status(500).json({ 
+      error: 'Interner Server-Fehler bei der Dateimigration', 
+      details: error.message 
+    });
+  }
 });
 
-// WebSocket connection handler
-wss.on('connection', (ws) => {
-  console.log('New WebSocket connection established');
-  
-  ws.on('message', (message) => {
-    console.log('Received WebSocket message:', message);
-  });
-  
-  ws.on('close', () => {
-    console.log('WebSocket connection closed');
-  });
-  
-  // Send initial connection confirmation
-  ws.send(JSON.stringify({ type: 'connected', payload: 'WebSocket connection established' }));
+server.listen(PORT, () => {
+  console.log(`Backend listening on http://localhost:${PORT}`);
 });
+
+// === NETZWERKORDNER MANAGEMENT API ===
+
+// Netzwerkordner für bestehenden Auftrag erstellen
+app.post('/api/orders/:orderId/create-network-folder', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    // Hole Auftragsdaten
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { orderNumber: true, title: true }
+    });
+    
+    if (!order) {
+      return res.status(404).json({ error: 'Auftrag nicht gefunden' });
+    }
+    
+    // Erstelle Netzwerkordner
+    const result = await createNetworkOrderFolder(order.orderNumber, orderId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message,
+        path: result.path,
+        orderNumber: order.orderNumber
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.message,
+        orderNumber: order.orderNumber
+      });
+    }
+    
+  } catch (error) {
+    console.error('Fehler beim Erstellen des Netzwerkordners:', error);
+    res.status(500).json({ 
+      error: 'Interner Server-Fehler beim Erstellen des Netzwerkordners',
+      details: error.message 
+    });
+  }
+});
+
+// Netzwerkordner-Status prüfen
+app.get('/api/orders/:orderId/network-folder-status', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    // Hole Auftragsdaten
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { orderNumber: true }
+    });
+    
+    if (!order) {
+      return res.status(404).json({ error: 'Auftrag nicht gefunden' });
+    }
+    
+    // Prüfe Netzwerkordner-Status
+    if (NETWORK_BASE_PATH === 'PLATZHALTER_NETZWERKPFAD') {
+      return res.json({
+        configured: false,
+        exists: false,
+        message: 'Netzwerkpfad nicht konfiguriert',
+        basePath: 'Nicht konfiguriert'
+      });
+    }
+    
+    const safeFolderName = `${order.orderNumber}`.replace(/[<>:"|?*]/g, '_');
+    const orderFolderPath = path.join(NETWORK_BASE_PATH, safeFolderName);
+    const exists = fs.existsSync(orderFolderPath);
+    
+    res.json({
+      configured: true,
+      exists: exists,
+      path: exists ? orderFolderPath : null,
+      basePath: NETWORK_BASE_PATH,
+      orderNumber: order.orderNumber,
+      message: exists ? 'Netzwerkordner existiert' : 'Netzwerkordner nicht gefunden'
+    });
+    
+  } catch (error) {
+    console.error('Fehler beim Prüfen des Netzwerkordner-Status:', error);
+    res.status(500).json({ 
+      error: 'Fehler beim Prüfen des Netzwerkordner-Status',
+      details: error.message 
+    });
+  }
+});
+
+// Alle Netzwerkordner für alle Aufträge erstellen (Admin-Funktion)
+app.post('/api/admin/create-all-network-folders', async (req, res) => {
+  try {
+    if (NETWORK_BASE_PATH === 'PLATZHALTER_NETZWERKPFAD') {
+      return res.status(400).json({ 
+        error: 'Netzwerkpfad nicht konfiguriert. Bitte NETWORK_BASE_PATH setzen.' 
+      });
+    }
+    
+    // Hole alle Aufträge
+    const orders = await prisma.order.findMany({
+      select: { id: true, orderNumber: true, title: true }
+    });
+    
+    const results = [];
+    let successCount = 0;
+    let errorCount = 0;
+    
+    for (const order of orders) {
+      const result = await createNetworkOrderFolder(order.orderNumber, order.id);
+      results.push({
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        success: result.success,
+        message: result.message
+      });
+      
+      if (result.success) successCount++;
+      else errorCount++;
+    }
+    
+    res.json({
+      success: true,
+      message: `Netzwerkordner-Erstellung abgeschlossen`,
+      statistics: {
+        total: orders.length,
+        created: successCount,
+        errors: errorCount
+      },
+      results: results
+    });
+    
+  } catch (error) {
+    console.error('Fehler beim Erstellen aller Netzwerkordner:', error);
+    res.status(500).json({ 
+      error: 'Fehler beim Erstellen aller Netzwerkordner',
+      details: error.message 
+    });
+  }
+});
+
+// Netzwerkpfad-Konfiguration anzeigen (für Admin)
+app.get('/api/admin/network-config', (req, res) => {
+  res.json({
+    configured: NETWORK_BASE_PATH !== 'PLATZHALTER_NETZWERKPFAD',
+    basePath: NETWORK_BASE_PATH,
+    accessible: NETWORK_BASE_PATH !== 'PLATZHALTER_NETZWERKPFAD' ? fs.existsSync(NETWORK_BASE_PATH) : false,
+    message: NETWORK_BASE_PATH === 'PLATZHALTER_NETZWERKPFAD' 
+      ? 'Netzwerkpfad nicht konfiguriert. Setzen Sie die Umgebungsvariable NETWORK_BASE_PATH.' 
+      : 'Netzwerkpfad konfiguriert'
+  });
+});
+
+// === SYSTEMKONFIGURATION API ===
+// Hilfsfunktion zum Laden der aktuellen Netzwerkordner-Konfiguration
+async function getNetworkConfig() {
+  try {
+    // Verwende direkte MongoDB-Operationen statt Prisma
+    let networkPathConfig = null;
+    if (db) {
+      networkPathConfig = await db.collection('SystemConfig').findOne({
+        key: 'NETWORK_BASE_PATH'
+      });
+    }
+    
+    // Wenn die Konfiguration existiert, verwende sie, ansonsten den Platzhalter
+    const configValue = networkPathConfig?.value || NETWORK_BASE_PATH;
+    console.log(`[DEBUG] getNetworkConfig: Found config value: "${configValue}"`);
+    return configValue;
+  } catch (error) {
+    console.error('[ERROR] Fehler beim Laden der Netzwerkpfad-Konfiguration:', error);
+    return NETWORK_BASE_PATH;
+  }
+}
+
+// API-Endpunkt: Alle Systemkonfigurationen abrufen (nur für Admins)
+app.get('/api/system/config', async (req, res) => {
+  try {
+    // TODO: Zugriffsrechte prüfen (nur Admin)
+    let configs = [];
+    if (db) {
+      configs = await db.collection('SystemConfig').find({}).toArray();
+    }
+    res.json(configs);
+  } catch (err) {
+    console.error('[ERROR] GET /api/system/config:', err);
+    res.status(500).json({ error: 'Fehler beim Laden der Systemkonfigurationen', details: err.message });
+  }
+});
+
+// API-Endpunkt: Bestimmte Systemkonfiguration abrufen
+app.get('/api/system/config/:key', async (req, res) => {
+  try {
+    let config = null;
+    if (db) {
+      config = await db.collection('SystemConfig').findOne({ key: req.params.key });
+    }
+    
+    if (!config) {
+      return res.status(404).json({ error: `Konfiguration '${req.params.key}' nicht gefunden` });
+    }
+    
+    res.json(config);
+  } catch (err) {
+    console.error('[ERROR] GET /api/system/config/:key:', err);
+    res.status(500).json({ error: 'Fehler beim Laden der Konfiguration', details: err.message });
+  }
+});
+
+// API-Endpunkt: Systemkonfiguration aktualisieren oder erstellen
+app.post('/api/system/config', async (req, res) => {
+  try {
+    // TODO: Zugriffsrechte prüfen (nur Admin)
+    const { key, value, description, userId } = req.body;
+    
+    console.log('[DEBUG] POST /api/system/config - Request:', JSON.stringify({ key, value, description, userId }));
+    
+    if (!key || value === undefined) {
+      return res.status(400).json({ error: 'Schlüssel und Wert sind erforderlich' });
+    }
+    
+    // Stelle sicher, dass der Pfad korrekt formatiert ist
+    let processedValue = value;
+    
+    // Für Pfadwerte: Normalisiere sie auf Forward Slashes
+    if (key === 'NETWORK_BASE_PATH') {
+      try {
+        // Überprüfe, ob es sich um einen gültigen Pfad handelt
+        if (processedValue !== 'PLATZHALTER_NETZWERKPFAD') {
+          // Entferne Anführungszeichen falls vorhanden
+          processedValue = processedValue.replace(/^["']|["']$/g, '');
+          
+          // Für Windows-Netzwerkpfade: Stelle sicher, dass UNC-Pfade korrekt formatiert sind
+          if (processedValue.startsWith('\\\\')) {
+            // Bereits ein UNC-Pfad, belassen wie er ist
+            console.log(`[DEBUG] UNC network path detected: "${processedValue}"`);
+          } else if (processedValue.match(/^[a-zA-Z]:\\/)) {
+            // Lokaler Windows-Pfad (z.B. C:\Ordner)
+            console.log(`[DEBUG] Local Windows path detected: "${processedValue}"`);
+          } else {
+            // Kein offensichtlicher Windows-Pfad, Normalisierung durchführen
+            processedValue = processedValue.replace(/\\\\/g, '/').replace(/\\/g, '/');
+            console.log(`[DEBUG] Normalized path: "${value}" -> "${processedValue}"`);
+          }
+        }
+      } catch (pathError) {
+        console.error('[ERROR] Path normalization error:', pathError);
+      }
+    }
+    
+    // Statt Prisma verwenden wir direkte MongoDB-Operationen um Transaktionsprobleme zu vermeiden
+    try {
+      console.log(`[DEBUG] Attempting to save config with key=${key}, value=${processedValue}`);
+      
+      if (!db) {
+        throw new Error('Database connection not available');
+      }
+      
+      // Prüfen, ob der Konfigurationseintrag bereits existiert
+      const existingConfig = await db.collection('SystemConfig').findOne({ key });
+      
+      let config;
+      const configData = {
+        key,
+        value: processedValue,
+        description: description || '',
+        updatedAt: new Date(),
+        updatedBy: userId || 'system'
+      };
+      
+      if (existingConfig) {
+        // Wenn existiert, dann update
+        const result = await db.collection('SystemConfig').updateOne(
+          { key },
+          { $set: configData }
+        );
+        
+        if (result.modifiedCount > 0) {
+          config = await db.collection('SystemConfig').findOne({ key });
+        } else {
+          throw new Error('Update operation failed');
+        }
+      } else {
+        // Sonst neu erstellen
+        const result = await db.collection('SystemConfig').insertOne(configData);
+        if (result.insertedId) {
+          config = await db.collection('SystemConfig').findOne({ _id: result.insertedId });
+        } else {
+          throw new Error('Insert operation failed');
+        }
+      }
+      
+      console.log(`[DEBUG] Config saved successfully:`, config);
+      
+      // Wenn der Netzwerkpfad aktualisiert wurde, auch die globale Variable aktualisieren
+      if (key === 'NETWORK_BASE_PATH') {
+        // Für das laufende System aktualisieren (wird bei Neustart überschrieben)
+        process.env.NETWORK_BASE_PATH = processedValue;
+        console.log(`[CONFIG] Netzwerkpfad aktualisiert: ${processedValue}`);
+      }
+      
+      res.json(config);
+    } catch (dbError) {
+      console.error('[ERROR] Database operation failed:', dbError);
+      res.status(500).json({ 
+        error: 'Fehler beim Aktualisieren der Konfiguration', 
+        details: dbError.message,
+        code: dbError.code || 'UNKNOWN'
+      });
+    }
+  } catch (err) {
+    console.error('[ERROR] POST /api/system/config:', err);
+    res.status(500).json({ 
+      error: 'Fehler beim Aktualisieren der Konfiguration', 
+      details: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+  }
+});
+
+// API-Endpunkt: Netzwerkpfad testen
+app.get('/api/system/network-test', async (req, res) => {
+  try {
+    // Lade aktuelle Konfiguration
+    const networkPath = await getNetworkConfig();
+    
+    console.log(`[DEBUG] GET /api/system/network-test - Path to test: "${networkPath}"`);
+    
+    if (networkPath === 'PLATZHALTER_NETZWERKPFAD') {
+      return res.json({ 
+        success: false, 
+        status: 'not_configured',
+        message: 'Netzwerkpfad ist nicht konfiguriert'
+      });
+    }
+    
+    // Prüfe ob der Pfad existiert und zugänglich ist
+    try {
+      if (fs.existsSync(networkPath)) {
+        // Versuche, einen Testordner zu erstellen und wieder zu löschen
+        const testDir = path.join(networkPath, '_test_' + Date.now());
+        console.log(`[DEBUG] Attempting to create test directory: "${testDir}"`);
+        
+        try {
+          fs.mkdirSync(testDir);
+          fs.rmdirSync(testDir);
+          return res.json({ 
+            success: true, 
+            status: 'accessible',
+            path: networkPath,
+            message: 'Netzwerkpfad ist erreichbar und schreibbar'
+          });
+        } catch (writeError) {
+          console.error(`[ERROR] Could not write to directory: ${writeError.message}`);
+          return res.json({ 
+            success: false, 
+            status: 'not_writable',
+            path: networkPath,
+            message: 'Netzwerkpfad existiert, ist aber nicht schreibbar',
+            error: writeError.message
+          });
+        }
+      } else {
+        console.log(`[DEBUG] Path does not exist: "${networkPath}"`);
+        return res.json({ 
+          success: false, 
+          status: 'not_found',
+          path: networkPath,
+          message: 'Netzwerkpfad existiert nicht oder ist nicht erreichbar'
+        });
+      }
+    } catch (fsError) {
+      console.error(`[ERROR] Error checking path: ${fsError.message}`);
+      return res.json({
+        success: false,
+        status: 'error',
+        path: networkPath,
+        message: `Fehler beim Zugriff auf den Pfad: ${fsError.message}`
+      });
+    }
+  } catch (err) {
+    console.error('[ERROR] GET /api/system/network-test:', err);
+    res.status(500).json({ 
+      error: 'Fehler beim Testen des Netzwerkpfads', 
+      details: err.message 
+    });
+  }
+});
+
+// API-Endpunkt: Status des Netzwerkordners für einen Auftrag prüfen
+app.get('/api/orders/:id/network-folder', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    console.log(`[DEBUG] GET /api/orders/${orderId}/network-folder - Start`);
+    
+    // Lade Auftrag mit Netzwerkpfad
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { 
+        id: true,
+        orderNumber: true,
+        networkPath: true,
+        networkFolderCreated: true
+      }
+    });
+    
+    if (!order) {
+      console.log(`[ERROR] Order not found: ${orderId}`);
+      return res.status(404).json({ error: 'Auftrag nicht gefunden' });
+    }
+    
+    console.log(`[DEBUG] Order found: ${order.orderNumber}, networkPath: ${order.networkPath}`);
+    
+    // Wenn der Netzwerkpfad bereits gespeichert ist, prüfe ob er existiert
+    if (order.networkPath) {
+      const exists = fs.existsSync(order.networkPath);
+      console.log(`[DEBUG] Checking existing path: ${order.networkPath}, exists: ${exists}`);
+      return res.json({
+        success: exists,
+        orderNumber: order.orderNumber,
+        networkPath: order.networkPath,
+        exists: exists,
+        message: exists ? 'Netzwerkordner existiert' : 'Netzwerkordner existiert nicht mehr'
+      });
+    }
+    
+    // Netzwerkpfad ist nicht gespeichert, aber wir können prüfen ob er existieren würde
+    console.log(`[DEBUG] No network path saved, checking configuration...`);
+    const networkPath = await getNetworkConfig();
+    if (networkPath === 'PLATZHALTER_NETZWERKPFAD') {
+      console.log(`[DEBUG] Network path not configured`);
+      return res.json({
+        success: false,
+        orderNumber: order.orderNumber,
+        exists: false,
+        message: 'Netzwerkpfad ist nicht konfiguriert'
+      });
+    }
+    
+    // Prüfe ob der Ordner existieren würde
+    const safeFolderName = `${order.orderNumber || order.id}`.replace(/[<>:"|?*]/g, '_');
+    const potentialPath = path.join(networkPath, safeFolderName);
+    const canCreate = fs.existsSync(networkPath);
+    
+    console.log(`[DEBUG] Potential path: ${potentialPath}, can create: ${canCreate}`);
+    
+    return res.json({
+      success: false,
+      orderNumber: order.orderNumber,
+      potentialPath: potentialPath,
+      exists: false,
+      canCreate: canCreate,
+      message: 'Netzwerkordner wurde noch nicht erstellt'
+    });
+  } catch (err) {
+    console.error(`[ERROR] GET /api/orders/${req.params.id}/network-folder:`, err);
+    res.status(500).json({ 
+      error: 'Fehler beim Prüfen des Netzwerkordners', 
+      details: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+  }
+});
+
+// API-Endpunkt: Netzwerkordner für einen Auftrag erstellen oder aktualisieren
+app.post('/api/orders/:id/network-folder', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    console.log(`[DEBUG] POST /api/orders/${orderId}/network-folder - Start`);
+    
+    // Lade Auftrag
+    console.log(`[DEBUG] Loading order with ID: ${orderId}`);
+    const order = await prisma.order.findUnique({
+      where: { id: orderId }
+    });
+    
+    if (!order) {
+      console.log(`[ERROR] Order not found: ${orderId}`);
+      return res.status(404).json({ error: 'Auftrag nicht gefunden' });
+    }
+    
+    console.log(`[DEBUG] Order found: ${order.orderNumber}, creating network folder...`);
+    
+    // Erstelle oder aktualisiere den Netzwerkordner
+    const result = await createNetworkOrderFolder(order.orderNumber, order.id);
+    console.log(`[DEBUG] Network folder creation result:`, result);
+    
+    // Erfolg: Speichere den Pfad und Status in der Datenbank
+    if (result.success) {
+      console.log(`[DEBUG] Updating order with network path: ${result.path}`);
+      try {
+        // Versuche zuerst mit Prisma
+        await prisma.order.update({
+          where: { id: orderId },
+          data: {
+            networkPath: result.path,
+            networkFolderCreated: true
+          }
+        });
+        console.log(`[DEBUG] Order updated successfully with Prisma`);
+      } catch (updateError) {
+        console.error(`[ERROR] Prisma update failed, trying direct MongoDB:`, updateError);
+        // Fallback: Verwende direkte MongoDB-Operationen
+        try {
+          if (db) {
+            const { ObjectId } = require('mongodb');
+            const updateResult = await db.collection('Order').updateOne(
+              { _id: new ObjectId(orderId) },
+              { 
+                $set: {
+                  networkPath: result.path,
+                  networkFolderCreated: true,
+                  updatedAt: new Date()
+                }
+              }
+            );
+            
+            if (updateResult.modifiedCount > 0) {
+              console.log(`[DEBUG] Order updated successfully with direct MongoDB`);
+            } else {
+              console.warn(`[WARN] No document was modified in MongoDB update`);
+              result.warning = 'Ordner erstellt, aber Datenbankupdate fehlgeschlagen';
+            }
+          } else {
+            result.warning = 'Ordner erstellt, aber Datenbankupdate fehlgeschlagen (keine DB-Verbindung)';
+          }
+        } catch (mongoError) {
+          console.error(`[ERROR] MongoDB update also failed:`, mongoError);
+          result.warning = 'Ordner erstellt, aber Datenbankupdate fehlgeschlagen';
+        }
+      }
+    }
+    
+    res.json(result);
+  } catch (err) {
+    console.error(`[ERROR] POST /api/orders/${req.params.id}/network-folder:`, err);
+    res.status(500).json({ 
+      error: 'Fehler beim Erstellen des Netzwerkordners', 
+      details: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+  }
+});
+
+// Hilfsfunktion: Kopiere bestehende Dateien in den Netzwerkordner
+async function migrateExistingFilesToNetworkFolder(orderId, orderFolderPath) {
+  try {
+    console.log(`[INFO] Migrating existing files to network folder for order ${orderId}...`);
+    
+    // 1. Hole alle Dokumente des Auftrags
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        documents: true,
+        components: {
+          include: {
+            documents: true
+          }
+        }
+      }
+    });
+    
+    if (!order) {
+      console.error(`[ERROR] Order ${orderId} not found for file migration`);
+      return { success: false, message: 'Auftrag nicht gefunden' };
+    }
+    
+    let migratedFiles = 0;
+    const errors = [];
+    // Zähler für verschiedene Dateitypen (global für den gesamten Auftrag)
+    const fileTypeCount = {};
+    
+    // 2. Kopiere Hauptauftragsdokumente in die passenden Unterordner
+    if (order.documents && order.documents.length > 0) {
+      for (const doc of order.documents) {
+        try {
+          if (doc.url && doc.url.startsWith('/uploads/')) {
+            const filename = doc.url.split('/').pop();
+            const sourcePath = path.join(__dirname, 'storage/uploads', filename);
+            
+            // Bestimme den passenden Unterordner für die Datei
+            const subFolder = getDestinationSubfolderForFile(filename);
+            
+            // Zähle Dateitypen
+            fileTypeCount[subFolder] = (fileTypeCount[subFolder] || 0) + 1;
+            
+            // Stelle sicher, dass der Unterordner existiert
+            const destFolder = path.join(orderFolderPath, subFolder);
+            if (!fs.existsSync(destFolder)) {
+              fs.mkdirSync(destFolder, { recursive: true });
+            }
+            
+            const destPath = path.join(destFolder, filename);
+            
+            if (fs.existsSync(sourcePath)) {
+              // Kopiere die Datei in den Netzwerkordner
+              fs.copyFileSync(sourcePath, destPath);
+              console.log(`[SUCCESS] Migrated file: ${sourcePath} -> ${destPath}`);
+              migratedFiles++;
+            } else {
+              console.warn(`[WARN] Source file not found: ${sourcePath}`);
+              errors.push(`Quelldatei nicht gefunden: ${filename}`);
+            }
+          }
+        } catch (fileError) {
+          console.error(`[ERROR] Failed to migrate file ${doc.name}:`, fileError);
+          errors.push(`Fehler beim Kopieren von ${doc.name}: ${fileError.message}`);
+        }
+      }
+      
+      // Log der Dateitypen
+      console.log(`[INFO] File type distribution for order ${orderId}:`, fileTypeCount);
+    }
+    
+    // 3. Kopiere Bauteil-Dokumente in die entsprechenden Bauteil-Ordner
+    if (order.components && order.components.length > 0) {
+      for (const component of order.components) {
+        if (component.documents && component.documents.length > 0) {
+          // Erstelle sicheren Bauteilordnernamen
+          const safeComponentName = component.title.replace(/[<>:"|?*]/g, '_');
+          const componentFolder = path.join(orderFolderPath, 'Bauteile', safeComponentName);
+          
+          // Stelle sicher, dass der Bauteil-Ordner existiert
+          if (!fs.existsSync(componentFolder)) {
+            fs.mkdirSync(componentFolder, { recursive: true });
+            // Erstelle die Bauteil-Unterordnerstruktur
+            createComponentSubfolders(componentFolder);
+          }
+          
+          // Zähler für verschiedene Dateitypen für dieses Bauteil
+          const componentFileTypeCount = {};
+          
+          for (const doc of component.documents) {
+            try {
+              if (doc.url && doc.url.startsWith('/uploads/')) {
+                const filename = doc.url.split('/').pop();
+                const sourcePath = path.join(__dirname, 'storage/uploads', filename);
+                
+                // Bestimme den passenden Unterordner für die Datei
+                const subFolder = getDestinationSubfolderForFile(filename);
+                
+                // Zähle Dateitypen
+                componentFileTypeCount[subFolder] = (componentFileTypeCount[subFolder] || 0) + 1;
+                
+                // Zähle auch im globalen Zähler
+                fileTypeCount[subFolder] = (fileTypeCount[subFolder] || 0) + 1;
+                
+                // Stelle sicher, dass der Unterordner existiert
+                const destSubFolder = path.join(componentFolder, subFolder);
+                if (!fs.existsSync(destSubFolder)) {
+                  fs.mkdirSync(destSubFolder, { recursive: true });
+                }
+                
+                const destPath = path.join(destSubFolder, filename);
+                
+                if (fs.existsSync(sourcePath)) {
+                  // Kopiere die Datei in den Netzwerkordner
+                  fs.copyFileSync(sourcePath, destPath);
+                  console.log(`[SUCCESS] Migrated component file: ${sourcePath} -> ${destPath}`);
+                  migratedFiles++;
+                } else {
+                  console.warn(`[WARN] Source file not found: ${sourcePath}`);
+                  errors.push(`Quelldatei nicht gefunden: ${filename}`);
+                }
+              }
+            } catch (fileError) {
+              console.error(`[ERROR] Failed to migrate component file ${doc.name}:`, fileError);
+              errors.push(`Fehler beim Kopieren von Bauteil-Datei ${doc.name}: ${fileError.message}`);
+            }
+          }
+          
+          // Log der Dateitypen für das Bauteil
+          console.log(`[INFO] File type distribution for component ${component.title}:`, componentFileTypeCount);
+        }
+      }
+    }
+    
+    return {
+      success: true,
+      migratedFiles,
+      errors: errors.length > 0 ? errors : null,
+      message: `${migratedFiles} Datei(en) in den Netzwerkordner migriert`,
+      fileTypes: fileTypeCount || {}
+    };
+  } catch (error) {
+    console.error('[ERROR] File migration error:', error);
+    return {
+      success: false,
+      message: `Fehler bei der Datei-Migration: ${error.message}`,
+      error
+    };
+  }
+}
+
+// Hilfsfunktion: Bestimme den passenden Unterordner basierend auf Dateityp
+function getDestinationSubfolderForFile(filename) {
+  // Dateiendung extrahieren
+  const extension = path.extname(filename).toLowerCase();
+  
+  // CAD/CAM-Dateien
+  if (['.dxf', '.dwg', '.stl', '.step', '.stp', '.iges', '.igs', '.x_t', '.gcode'].includes(extension)) {
+    return 'CAD_CAM';
+  }
+  
+  // Bilder
+  if (['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tif', '.tiff'].includes(extension)) {
+    return 'Bilder';
+  }
+  
+  // PDF-Dokumente (Standardfall für Dokumentation)
+  if (['.pdf'].includes(extension)) {
+    return 'Dokumentation';
+  }
+  
+  // Office-Dokumente
+  if (['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.csv'].includes(extension)) {
+    return 'Dokumente';
+  }
+  
+  // Standardfall: Dokumentation
+  return 'Dokumentation';
+}
+
+// Hilfsfunktion: Erstelle Bauteil-Unterordnerstruktur
+function createComponentSubfolders(componentFolder) {
+  const componentSubFolders = [
+    'CAD_CAM',           // CAD/CAM-Dateien des Bauteils
+    'Zeichnungen',       // Technische Zeichnungen des Bauteils
+    'Dokumentation',     // Bauteil-spezifische Dokumentation
+    'Bilder',            // Fotos und Bilder des Bauteils
+    'Dokumente'          // Sonstige Dokumente zum Bauteil
+  ];
+  
+  for (const folder of componentSubFolders) {
+    const subFolderPath = path.join(componentFolder, folder);
+    if (!fs.existsSync(subFolderPath)) {
+      fs.mkdirSync(subFolderPath, { recursive: true });
+    }
+  }
+}
 

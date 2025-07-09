@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Plus, Edit2, Trash2, User, Building2, Shield } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { WorkshopAccount } from '../types';
+import NetworkConfigAdmin from './NetworkConfigAdmin';
 
 interface AccountManagementProps {
   onClose: () => void;
@@ -177,6 +178,14 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
             <X className="w-6 h-6" />
           </button>
         </div>
+
+        {/* Netzwerkkonfiguration (nur für Admins sichtbar) */}
+        {state.currentUser?.role === 'admin' && (
+          <div className="p-6 border-b">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Systemkonfiguration</h3>
+            <NetworkConfigAdmin />
+          </div>
+        )}
 
         <div className="p-6">
           <div className="flex justify-between items-center mb-6">

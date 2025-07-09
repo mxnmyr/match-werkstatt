@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { X, FileText, Download } from 'lucide-react';
+import { X, FileText, Download, Upload, Plus } from 'lucide-react';
 import { Order } from '../types';
 import ws from '../utils/websocket';
 import { useApp } from '../context/AppContext';
+import NetworkFileUpload from './NetworkFileUpload';
 
 interface OrderDetailsProps {
   order: Order;
@@ -21,6 +22,9 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
   const [revisionDescription, setRevisionDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [titleImageUrl, setTitleImageUrl] = useState('');
+  const [showUploadSection, setShowUploadSection] = useState(false);
+  const [showComponentUpload, setShowComponentUpload] = useState(false);
+  const [activeComponentId, setActiveComponentId] = useState<string | null>(null);
 
   useEffect(() => {
     if (currentOrder.titleImage) {
@@ -345,7 +349,63 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
               })()}
 
               <div>
-                <h4 className="text-md font-semibold text-gray-900 mb-2">Dokumente</h4>
+                <div className="flex justify-between items-center mb-2">
+                  <h4 className="text-md font-semibold text-gray-900">Dokumente</h4>
+                  {state.currentUser && state.currentUser.role !== 'client' && (
+                    <button 
+                      onClick={() => setShowUploadSection(prev => !prev)}
+                      className="flex items-center text-sm text-blue-600 hover:text-blue-800"
+                    >
+                      {showUploadSection ? (
+                        <><X className="w-4 h-4 mr-1" /> Abbrechen</>
+                      ) : (
+                        <><Plus className="w-4 h-4 mr-1" /> Datei hochladen</>
+                      )}
+                    </button>
+                  )}
+                </div>
+                
+                {showUploadSection && state.currentUser && state.currentUser.role !== 'client' && (
+                  <div className="mb-4">
+                    <NetworkFileUpload
+                      orderId={currentOrder.id}
+                      uploadType="document"
+                      onUploadSuccess={(result) => {
+                        setShowUploadSection(false);
+                        dispatch({
+                          type: 'SHOW_NOTIFICATION',
+                          payload: {
+                            message: 'Dokument erfolgreich hochgeladen',
+                            type: 'success'
+                          }
+                        });
+                        
+                        // Reload order to get updated documents
+                        fetch(`http://localhost:3001/api/orders/${currentOrder.id}`)
+                          .then(response => response.json())
+                          .then(data => {
+                            dispatch({
+                              type: 'UPDATE_ORDER',
+                              payload: data
+                            });
+                          })
+                          .catch(error => {
+                            console.error('Error reloading order:', error);
+                          });
+                      }}
+                      onUploadError={(error) => {
+                        dispatch({
+                          type: 'SHOW_NOTIFICATION',
+                          payload: {
+                            message: `Fehler beim Hochladen: ${error.message}`,
+                            type: 'error'
+                          }
+                        });
+                      }}
+                    />
+                  </div>
+                )}
+                
                 {currentOrder.documents && currentOrder.documents.length > 0 ? (
                   <div className="space-y-2">
                     {currentOrder.documents.map((doc) => (
@@ -388,9 +448,72 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                           )}
                         </div>
                         
-                        {component.documents && component.documents.length > 0 && (
-                          <div>
-                            <h6 className="text-xs font-medium text-gray-700 mb-2">Dokumente:</h6>
+                        {/* Component Documents */}
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <h6 className="text-xs font-medium text-gray-700">Dokumente:</h6>
+                            {state.currentUser && state.currentUser.role !== 'client' && (
+                              <button 
+                                onClick={() => {
+                                  // Store the component ID for the upload form
+                                  setActiveComponentId(component.id);
+                                  setShowComponentUpload(prev => !prev);
+                                }}
+                                className="flex items-center text-xs text-blue-600 hover:text-blue-800"
+                              >
+                                {showComponentUpload && activeComponentId === component.id ? (
+                                  <><X className="w-3 h-3 mr-1" /> Abbrechen</>
+                                ) : (
+                                  <><Plus className="w-3 h-3 mr-1" /> Datei hochladen</>
+                                )}
+                              </button>
+                            )}
+                          </div>
+                          
+                          {showComponentUpload && activeComponentId === component.id && 
+                           state.currentUser && state.currentUser.role !== 'client' && (
+                            <div className="mb-3">
+                              <NetworkFileUpload
+                                orderId={currentOrder.id}
+                                componentId={component.id}
+                                uploadType="component"
+                                onUploadSuccess={() => {
+                                  setShowComponentUpload(false);
+                                  dispatch({
+                                    type: 'SHOW_NOTIFICATION',
+                                    payload: {
+                                      message: 'Bauteil-Dokument erfolgreich hochgeladen',
+                                      type: 'success'
+                                    }
+                                  });
+                                  
+                                  // Reload order to get updated documents
+                                  fetch(`http://localhost:3001/api/orders/${currentOrder.id}`)
+                                    .then(response => response.json())
+                                    .then(data => {
+                                      dispatch({
+                                        type: 'UPDATE_ORDER',
+                                        payload: data
+                                      });
+                                    })
+                                    .catch(error => {
+                                      console.error('Error reloading order:', error);
+                                    });
+                                }}
+                                onUploadError={(error) => {
+                                  dispatch({
+                                    type: 'SHOW_NOTIFICATION',
+                                    payload: {
+                                      message: `Fehler beim Hochladen: ${error.message}`,
+                                      type: 'error'
+                                    }
+                                  });
+                                }}
+                              />
+                            </div>
+                          )}
+                          
+                          {component.documents && component.documents.length > 0 ? (
                             <div className="space-y-1">
                               {component.documents.map((doc) => (
                                 <div key={doc.id} className="flex items-center justify-between p-2 bg-white rounded border text-sm">
@@ -405,16 +528,18 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                                   </div>
                                   <button
                                     onClick={() => handleDownload(doc)}
-                                    className="text-blue-600 hover:text-blue-800 transition-colors flex items-center"
+                                    className="text-blue-600 hover:text-blue-800 transition-colors flex items-center text-xs"
                                   >
                                     <Download className="w-3 h-3 mr-1" />
-                                    <span className="text-xs">Download</span>
+                                    <span>Download</span>
                                   </button>
                                 </div>
                               ))}
                             </div>
-                          </div>
-                        )}
+                          ) : (
+                            <p className="text-gray-500 text-xs">Keine Dokumente hochgeladen</p>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>

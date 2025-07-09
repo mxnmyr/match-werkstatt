@@ -8,6 +8,7 @@ interface AppState {
   clientAccounts: ClientAccount[];
   isAuthenticated: boolean;
   notification: { message: string; type: 'success' | 'error' | 'info' } | null;
+  systemConfigs: { id: string; key: string; value: string; description?: string }[];
 }
 
 type AppAction =
@@ -30,7 +31,9 @@ type AppAction =
   | { type: 'LOAD_WORKSHOP_ACCOUNTS'; payload: WorkshopAccount[] }
   | { type: 'LOAD_CLIENT_ACCOUNTS'; payload: ClientAccount[] }
   | { type: 'APPROVE_CLIENT_ACCOUNT'; payload: string }
-  | { type: 'DELETE_CLIENT_ACCOUNT'; payload: string };
+  | { type: 'DELETE_CLIENT_ACCOUNT'; payload: string }
+  | { type: 'LOAD_SYSTEM_CONFIGS'; payload: { id: string; key: string; value: string; description?: string }[] }
+  | { type: 'UPDATE_SYSTEM_CONFIG'; payload: { id: string; key: string; value: string; description?: string } };
 
 const initialState: AppState = {
   currentUser: null,
@@ -38,7 +41,8 @@ const initialState: AppState = {
   workshopAccounts: [],
   clientAccounts: [],
   isAuthenticated: false,
-  notification: null
+  notification: null,
+  systemConfigs: []
 };
 
 function appReducer(state: AppState, action: AppAction): AppState {
@@ -188,6 +192,18 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         clientAccounts: action.payload
+      };
+    case 'LOAD_SYSTEM_CONFIGS':
+      return {
+        ...state,
+        systemConfigs: action.payload
+      };
+    case 'UPDATE_SYSTEM_CONFIG':
+      return {
+        ...state,
+        systemConfigs: state.systemConfigs.map(config => 
+          config.key === action.payload.key ? action.payload : config
+        )
       };
     default:
       return state;
