@@ -257,19 +257,22 @@ export default function ClientDashboard() {
                       const d = new Date(newDeadlineStr);
                       if (!isNaN(d.getTime())) newDeadline = d;
                     }
-                    const updatedOrder = {
-                      ...order,
-                      status: 'rework', // NEU: Nacharbeit-Status
-                      revisionRequest: {
-                        description: revisionComment,
-                        newDeadline,
-                        requestedAt: new Date()
-                      }
+                    
+                    // Sende nur die notwendigen Felder für Nacharbeitskommentare
+                    const requestBody = {
+                      status: 'rework',
+                      revisionComment: revisionComment, // Das Backend erwartet revisionComment
+                      userId: state.currentUser?.id,
+                      userName: state.currentUser?.name,
+                      updatedAt: new Date(),
                     };
+                    
+                    console.log('ClientDashboard: Sending rework request:', requestBody);
+                    
                     await fetch(`http://localhost:3001/api/orders/${order.id}`, {
                       method: 'PUT',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(updatedOrder)
+                      body: JSON.stringify(requestBody)
                     });
                     // Nach erfolgreichem Abschluss: Aufträge neu laden
                     if (typeof window !== 'undefined') window.location.reload();

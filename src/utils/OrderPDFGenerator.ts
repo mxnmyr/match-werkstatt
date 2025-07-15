@@ -240,9 +240,21 @@ export class OrderPDFGenerator {
     return pdfDoc.save();
   }
 
+  // Hilfsfunktion: Prüft ob eine Datei eine PDF ist
+  private isPDFFile(fileName: string): boolean {
+    return fileName.toLowerCase().endsWith('.pdf');
+  }
+
   private async addDocumentToMergedPDF(pdfDoc: PDFDocument, document: any, documentType: string): Promise<void> {
     try {
       console.log(`Processing ${documentType}:`, document.name, 'ID:', document.id);
+      
+      // Nur PDF-Dateien verarbeiten, andere Dateien überspringen
+      if (!this.isPDFFile(document.name)) {
+        console.log(`Skipping non-PDF file: ${document.name}`);
+        return;
+      }
+      
       const docBuffer = await this.fetchDocumentAsArrayBuffer(document.id);
       console.log('Document buffer size:', docBuffer.byteLength);
       
