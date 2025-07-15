@@ -219,7 +219,7 @@ export default function EditOrder({ order, onClose }: EditOrderProps) {
                 <input
                   type="file"
                   multiple
-                  accept=".pdf"
+                  accept=".pdf,.stl"
                   onChange={(e) => handleFileUpload(e.target.files)}
                   className="hidden"
                 />

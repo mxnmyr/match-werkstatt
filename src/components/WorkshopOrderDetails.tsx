@@ -19,6 +19,7 @@ import { Order, SubTask, PDFDocument, RevisionComment, NoteHistory } from '../ty
 import OrderPDFGenerator from '../utils/OrderPDFGenerator';
 import NetworkFolderStatus from './NetworkFolderStatus';
 import NetworkFileUpload from './NetworkFileUpload';
+import STLViewer from './STLViewer';
 
 interface WorkshopOrderDetailsProps {
   order: Order;
@@ -42,6 +43,28 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   const [subTaskScopeType, setSubTaskScopeType] = useState<'order' | 'component'>('order');
   const [subTaskAssignedComponentId, setSubTaskAssignedComponentId] = useState('');
   const [dragActive, setDragActive] = useState(false);
+  const [showSTLViewers, setShowSTLViewers] = useState<{[key: string]: boolean}>({});
+
+  const toggleSTLViewer = (docId: string) => {
+    setShowSTLViewers(prev => ({
+      ...prev,
+      [docId]: !prev[docId]
+    }));
+  };
+
+  const isSTLFile = (fileName: string) => {
+    return /\.stl$/i.test(fileName);
+  };
+
+  const getFileIcon = (fileName: string, className = "w-5 h-5") => {
+    if (isSTLFile(fileName)) return <Server className={`${className} text-purple-600`} />;
+    return <FileText className={`${className} text-red-600`} />;
+  };
+
+  const getFileTypeDescription = (fileName: string) => {
+    if (isSTLFile(fileName)) return '3D-Modell (STL)';
+    return 'PDF-Dokument';
+  };
   const [showRevisionDialog, setShowRevisionDialog] = useState(false);
   const [revisionComment, setRevisionComment] = useState('');
   const [revisionError, setRevisionError] = useState('');
@@ -641,17 +664,48 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                     {localOrder.documents.map((doc) => (
                       <div key={doc.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                         <div className="flex items-center">
-                          <FileText className="w-5 h-5 text-red-600 mr-3" />
-                          <span className="text-sm text-gray-900">{doc.name}</span>
+                          {getFileIcon(doc.name)}
+                          <div className="ml-3">
+                            <span className="text-sm text-gray-900">{doc.name}</span>
+                            <div className="text-xs text-gray-500 mt-1">
+                              {getFileTypeDescription(doc.name)}
+                            </div>
+                          </div>
                         </div>
-                        <button
-                          onClick={() => handleDownload(doc)}
-                          className="text-blue-600 hover:text-blue-800 transition-colors flex items-center"
-                        >
-                          <Download className="w-4 h-4 mr-1" />
-                          <span className="text-sm">Download</span>
-                        </button>
+                        <div className="flex items-center space-x-2">
+                          {isSTLFile(doc.name) && (
+                            <button
+                              onClick={() => toggleSTLViewer(doc.id)}
+                              className="inline-flex items-center px-2 py-1 text-xs font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded transition-colors"
+                              title="3D-Ansicht"
+                            >
+                              <Server className="w-3 h-3 mr-1" />
+                              {showSTLViewers[doc.id] ? '3D ausblenden' : '3D anzeigen'}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDownload(doc)}
+                            className="text-blue-600 hover:text-blue-800 transition-colors flex items-center"
+                          >
+                            <Download className="w-4 h-4 mr-1" />
+                            <span className="text-sm">Download</span>
+                          </button>
+                        </div>
                       </div>
+                    ))}
+                    
+                    {/* STL Viewers */}
+                    {localOrder.documents.map((doc) => (
+                      isSTLFile(doc.name) && showSTLViewers[doc.id] && (
+                        <div key={`viewer-${doc.id}`} className="mt-2 p-4 bg-gray-50 rounded-lg">
+                          <STLViewer
+                            fileUrl={`http://localhost:3001${doc.url}`}
+                            fileName={doc.name}
+                            className="w-full"
+                            showControls={true}
+                          />
+                        </div>
+                      )
                     ))}
                   </div>
                 ) : (
