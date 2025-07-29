@@ -90,7 +90,11 @@ export default function ClientDashboard() {
   }
 
   if (editingOrder) {
-    return <EditOrder order={editingOrder} onClose={() => setEditingOrder(null)} />;
+    return <EditOrder 
+      order={editingOrder} 
+      onClose={() => setEditingOrder(null)} 
+      onOrderUpdated={fetchOrders}
+    />;
   }
 
   if (selectedOrder) {
@@ -177,7 +181,7 @@ export default function ClientDashboard() {
                       {order.documents.length} Dokument(e)
                     </span>
                     <div className="flex space-x-2">
-                      {order.status === 'revision' && (
+                      {(order.status === 'revision' || order.status === 'rework') && (
                         <button
                           onClick={() => setEditingOrder(order)}
                           className="text-orange-600 hover:text-orange-800 text-sm flex items-center"

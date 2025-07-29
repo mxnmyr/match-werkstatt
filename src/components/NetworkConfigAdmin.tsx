@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { Settings, CheckCircle, XCircle, Save, Loader2 } from 'lucide-react';
 
@@ -16,16 +16,12 @@ export default function NetworkConfigAdmin() {
   useEffect(() => {
     const loadConfigs = async () => {
       try {
-        const response = await fetch('http://localhost:3001/api/system/config');
+        const response = await fetch('http://localhost:3001/api/admin/network-config');
         if (response.ok) {
-          const configs = await response.json();
-          dispatch({ type: 'LOAD_SYSTEM_CONFIGS', payload: configs });
-          
-          // Netzwerkpfad extrahieren, falls vorhanden
-          const networkPathConfig = configs.find((config: any) => config.key === 'NETWORK_BASE_PATH');
-          if (networkPathConfig) {
-            setNetworkPath(networkPathConfig.value);
-            setNetworkPathDescription(networkPathConfig.description || '');
+          const result = await response.json();
+          if (result.success && result.networkPath) {
+            setNetworkPath(result.networkPath);
+            setNetworkPathDescription(result.description || '');
           }
         }
       } catch (error) {
@@ -71,47 +67,38 @@ export default function NetworkConfigAdmin() {
       
       console.log('Sending network path:', pathToSend);
       
-      const response = await fetch('http://localhost:3001/api/system/config', {
+      const response = await fetch('http://localhost:3001/api/admin/network-config', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          key: 'NETWORK_BASE_PATH',
-          value: pathToSend,
-          description: networkPathDescription || 'Basis-Netzwerkpfad für Auftragsordner',
-          userId: state.currentUser?.id || 'system'
+          networkPath: pathToSend
         }),
       });
       
-      if (response.ok) {
-        const config = await response.json();
-        dispatch({ 
-          type: 'UPDATE_SYSTEM_CONFIG', 
-          payload: config 
-        });
-        
+      const result = await response.json();
+      
+      if (response.ok && result.success) {
         dispatch({
           type: 'SHOW_NOTIFICATION',
           payload: {
-            message: 'Netzwerkpfad wurde gespeichert.',
+            message: 'Netzwerkpfad wurde erfolgreich gespeichert.',
             type: 'success'
           }
+        });
+        
+        setConnectionStatus({ 
+          status: 'success', 
+          message: 'Netzwerkpfad konfiguriert und erreichbar' 
         });
         
         // Verbindung testen
         await testNetworkConnection();
       } else {
-        // Versuche, die genaue Fehlermeldung vom Server zu bekommen
-        let errorMessage = 'Fehler beim Speichern';
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.error || errorData.details || errorMessage;
-          console.error('Server error details:', errorData);
-        } catch (e) {
-          console.error('Fehler beim Parsen der Serverantwort:', e);
-          errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-        }
+        // Verwende das bereits geparste result
+        let errorMessage = result.error || result.details || 'Fehler beim Speichern';
+        console.error('Server error details:', result);
         
         throw new Error(errorMessage);
       }

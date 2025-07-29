@@ -352,7 +352,7 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
                 <input
                   type="file"
                   multiple
-                  accept=".pdf,.stl"
+                  accept=".pdf,.stl,.step,.stp,.ipt,.iges,.igs,.obj,.ply,.3ds,.dae,.gltf,.glb"
                   onChange={(e) => handleFileUpload(e)}
                   className="hidden"
                 />
@@ -453,10 +453,10 @@ export default function CreateOrder({ onClose }: CreateOrderProps) {
                       <div className="flex items-center space-x-2 mb-2">
                         <label className="cursor-pointer inline-flex items-center px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">
                           <Upload className="w-4 h-4 mr-2" />
-                          PDF & STL hochladen
+                          Dateien hochladen
                           <input
                             type="file"
-                            accept=".pdf,.stl"
+                            accept=".pdf,.stl,.step,.stp,.ipt,.iges,.igs,.obj,.ply,.3ds,.dae,.gltf,.glb"
                             onChange={(e) => handleComponentFileUpload(component.id, e)}
                             className="hidden"
                           />
