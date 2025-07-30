@@ -122,21 +122,21 @@ Das System ist dann verfügbar unter:
 
 ```mermaid
 graph TD
-    A[Auftrag erstellt] --> B[Pending]
-    B --> C[Accepted]
-    C --> D[In Progress]
+    A[Auftrag erstellt] --> B[Ausstehend]
+    B --> C[Angenommen]
+    C --> D[In Bearbeitung]
     D --> E{Auftrag abgeschlossen}
-    E -->|Interner Auftrag| F[Completed]
-    E -->|Kunden-Auftrag| G[Waiting Confirmation]
+    E -->|Interner Auftrag| F[Abgeschlossen]
+    E -->|Kunden-Auftrag| G[Warten auf Endabnahme]
     G --> H{Kunde prüft}
-    H -->|Bestätigt| F[Completed]
-    H -->|Nacharbeit| I[Rework]
+    H -->|Bestätigt| F[Abgeschlossen]
+    H -->|Nacharbeit| I[Überarbeitung]
     I --> D
     D --> J{Revision nötig?}
     J -->|Ja| K[Revision]
     K --> B
     J -->|Nein| E
-    F --> L[Archived]
+    F --> L[Archiviert]
 ```
 
 ### Auftragstypen
@@ -455,17 +455,10 @@ npm run dev -- --force
 - [ ] Push-Notifications
 - [ ] Mobile App (React Native)
 - [ ] Erweiterte Reporting-Funktionen
-- [ ] Integration mit externen ERP-Systemen
-- [ ] Barcode-Generierung für Komponenten
 - [ ] Zeiterfassung mit Timer-Funktionen
 - [ ] Kalender-Integration
-- [ ] Multi-Mandanten-Fähigkeit
 
-### Performance-Optimierungen
-- [ ] Lazy Loading für große Auftragslisten
-- [ ] Caching-Strategien
-- [ ] Database-Indizierung optimieren
-- [ ] Image-Compression für Uploads
+
 
 ---
 
@@ -477,6 +470,6 @@ Dieses Projekt ist für den internen Gebrauch entwickelt. Alle Rechte vorbehalte
 
 **Version**: 1.0.0  
 **Letztes Update**: Juli 2025  
-**Entwickelt für**: Match-Werkstatt Auftragsmanagement
+**Entwickelt für**: match-Werkstatt Auftragsmanagement
 
 Für technische Fragen oder Support kontaktieren Sie das Entwicklungsteam.
