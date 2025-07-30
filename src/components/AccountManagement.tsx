@@ -49,13 +49,52 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editingAccount) {
-      const updatedAccount: WorkshopAccount = {
-        ...editingAccount,
-        ...formData,
-        updatedAt: new Date()
-      };
-      dispatch({ type: 'UPDATE_WORKSHOP_ACCOUNT', payload: updatedAccount });
-      setEditingAccount(null);
+      // Update existing account via backend
+      try {
+        const updateData: any = {
+          username: formData.username,
+          name: formData.name,
+          role: formData.role,
+          updatedAt: new Date()
+        };
+        
+        // Only include password if it's not empty
+        if (formData.password && formData.password.trim() !== '') {
+          updateData.password = formData.password;
+        }
+        
+        const response = await fetch(`http://localhost:3001/api/users/${editingAccount.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updateData)
+        });
+
+        if (response.ok) {
+          const updatedUser = await response.json();
+          dispatch({ type: 'UPDATE_WORKSHOP_ACCOUNT', payload: updatedUser });
+          setEditingAccount(null);
+          
+          dispatch({
+            type: 'SHOW_NOTIFICATION',
+            payload: {
+              message: 'Account erfolgreich aktualisiert',
+              type: 'success'
+            }
+          });
+        } else {
+          throw new Error('Fehler beim Aktualisieren des Accounts');
+        }
+      } catch (error) {
+        console.error('Fehler beim Aktualisieren des Accounts:', error);
+        dispatch({
+          type: 'SHOW_NOTIFICATION',
+          payload: {
+            message: 'Fehler beim Aktualisieren des Accounts',
+            type: 'error'
+          }
+        });
+        return;
+      }
     } else {
       // Backend-Call für neuen User
       try {
@@ -96,7 +135,7 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
     setEditingAccount(account);
     setFormData({
       username: account.username,
-      password: account.password,
+      password: '', // Passwort-Feld beim Bearbeiten leer lassen
       name: account.name,
       role: account.role
     });
@@ -142,10 +181,42 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
     setClientForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
-  const handleSaveClient = () => {
+  const handleSaveClient = async () => {
     const updated = { ...editingClient, ...clientForm };
-    dispatch({ type: 'UPDATE_CLIENT_ACCOUNT', payload: updated });
-    setEditingClient(null);
+    
+    try {
+      const response = await fetch(`http://localhost:3001/api/users/${editingClient.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updated)
+      });
+
+      if (response.ok) {
+        dispatch({ type: 'UPDATE_CLIENT_ACCOUNT', payload: updated });
+        setEditingClient(null);
+        
+        dispatch({
+          type: 'SHOW_NOTIFICATION',
+          payload: {
+            message: 'Auftraggeber-Account erfolgreich aktualisiert',
+            type: 'success'
+          }
+        });
+      } else {
+        throw new Error('Fehler beim Aktualisieren des Accounts');
+      }
+    } catch (error) {
+      console.error('Fehler beim Speichern der Client-Änderungen:', error);
+      dispatch({
+        type: 'SHOW_NOTIFICATION',
+        payload: {
+          message: 'Fehler beim Aktualisieren des Accounts',
+          type: 'error'
+        }
+      });
+    }
   };
 
   const handleDeleteClient = async (id: string) => {
@@ -220,14 +291,15 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Passwort *
+                      Passwort {editingAccount ? '(leer lassen für keine Änderung)' : '*'}
                     </label>
                     <input
                       type="password"
                       value={formData.password}
                       onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      required
+                      required={!editingAccount}
+                      placeholder={editingAccount ? 'Neues Passwort eingeben oder leer lassen' : 'Passwort eingeben'}
                     />
                   </div>
                   <div>

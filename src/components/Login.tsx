@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
-import { User, LogIn, Building2, UserPlus } from 'lucide-react';
+import { LogIn, Building2, UserPlus } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import ClientRegistration from './ClientRegistration';
 
 export default function Login() {
-  const { state, dispatch } = useApp();
-  const [loginType, setLoginType] = useState<'client' | 'workshop'>('client');
+  const { dispatch } = useApp();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -50,33 +49,6 @@ export default function Login() {
           <p className="text-gray-600 mt-2">Bitte melden Sie sich an</p>
         </div>
 
-        <div className="flex mb-6 bg-gray-100 rounded-lg p-1">
-          <button
-            type="button"
-            onClick={() => setLoginType('client')}
-            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
-              loginType === 'client'
-                ? 'bg-white text-blue-600 shadow-sm'
-                : 'text-gray-600 hover:text-gray-900'
-            }`}
-          >
-            <User className="w-4 h-4 inline mr-2" />
-            Auftraggeber
-          </button>
-          <button
-            type="button"
-            onClick={() => setLoginType('workshop')}
-            className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
-              loginType === 'workshop'
-                ? 'bg-white text-blue-600 shadow-sm'
-                : 'text-gray-600 hover:text-gray-900'
-            }`}
-          >
-            <Building2 className="w-4 h-4 inline mr-2" />
-            Werkstatt
-          </button>
-        </div>
-
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
             <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-1">
@@ -88,7 +60,7 @@ export default function Login() {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder={loginType === 'client' ? 'Ihr Benutzername' : 'werkstatt1'}
+              placeholder="Benutzername eingeben"
               required
             />
           </div>
@@ -108,12 +80,6 @@ export default function Login() {
             />
           </div>
 
-          {loginType === 'workshop' && (
-            <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
-              Demo-Accounts: werkstatt1 (admin123), werkstatt2/werkstatt3 (pass123)
-            </div>
-          )}
-
           {error && (
             <div className="text-red-600 text-sm bg-red-50 p-2 rounded">
               {error}
@@ -128,16 +94,14 @@ export default function Login() {
             Anmelden
           </button>
 
-          {loginType === 'client' && (
-            <button
-              type="button"
-              onClick={() => setShowRegistration(true)}
-              className="w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center mt-2"
-            >
-              <UserPlus className="w-4 h-4 mr-2" />
-              Neuen Account erstellen
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setShowRegistration(true)}
+            className="w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center mt-2"
+          >
+            <UserPlus className="w-4 h-4 mr-2" />
+            Neuen Account erstellen
+          </button>
         </form>
       </div>
     </div>

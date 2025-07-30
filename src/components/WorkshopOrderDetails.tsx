@@ -12,7 +12,8 @@ import {
   Download,
   Upload,
   Printer,
-  Server
+  Server,
+  Eye
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Order, SubTask, PDFDocument, RevisionComment, NoteHistory } from '../types';
@@ -44,6 +45,8 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   const [subTaskAssignedComponentId, setSubTaskAssignedComponentId] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [showSTLViewers, setShowSTLViewers] = useState<{[key: string]: boolean}>({});
+  const [showComponentUpload, setShowComponentUpload] = useState(false);
+  const [activeComponentId, setActiveComponentId] = useState<string | null>(null);
 
   const toggleSTLViewer = (docId: string) => {
     setShowSTLViewers(prev => ({
@@ -81,15 +84,20 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     if (updatedOrder) {
       console.log('WorkshopOrderDetails: Updating localOrder from context');
       console.log('Current reworkComments:', updatedOrder.reworkComments);
+      console.log('Components:', updatedOrder.components);
       setLocalOrder(updatedOrder);
     }
   }, [state.orders, order.id]);
 
   useEffect(() => {
-    if (localOrder.titleImage) {
+    console.log('Title image check:', localOrder.titleImage);
+    if (localOrder.titleImage && localOrder.titleImage.hasImage) {
       // Append a timestamp to break browser cache when the image is updated
-      setTitleImageUrl(`http://localhost:3001/api/orders/${localOrder.id}/title-image?t=${new Date().getTime()}`);
+      const url = `http://localhost:3001/api/orders/${localOrder.id}/title-image?t=${new Date().getTime()}`;
+      console.log('Setting title image URL:', url);
+      setTitleImageUrl(url);
     } else {
+      console.log('No title image found, clearing URL');
       setTitleImageUrl('');
     }
   }, [localOrder.titleImage, localOrder.id]);
@@ -149,6 +157,10 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
       }
       const freshOrder = await response.json();
       setLocalOrder(freshOrder);
+      
+      // Update global state as well
+      dispatch({ type: 'UPDATE_ORDER', payload: freshOrder });
+      
       setChangedFields({}); // Zurücksetzen nach erfolgreichem Speichern
 
       if (notificationMsg) {
@@ -188,8 +200,22 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
       case 'accepted': message = 'Auftrag wurde erfolgreich angenommen'; break;
       case 'in_progress': message = 'Auftrag wurde gestartet'; break;
       case 'completed':
-        updatedFields.status = 'waiting_confirmation';
-        message = 'Auftrag wartet auf Endabnahme durch den Kunden';
+        // Check if order was created by workshop/admin or if current user is admin
+        const isInternalOrder = !localOrder.clientId || 
+                               localOrder.clientId === state.currentUser?.id ||
+                               state.currentUser?.role === 'admin' ||
+                               state.currentUser?.role === 'workshop';
+        
+        if (isInternalOrder) {
+          // Direct completion for internal orders
+          updatedFields.status = 'completed';
+          updatedFields.confirmationDate = new Date();
+          message = 'Auftrag wurde abgeschlossen';
+        } else {
+          // Client confirmation required for external orders
+          updatedFields.status = 'waiting_confirmation';
+          message = 'Auftrag wartet auf Endabnahme durch den Kunden';
+        }
         break;
       default: message = 'Auftragsstatus wurde aktualisiert';
     }
@@ -238,6 +264,8 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
       // müssen wir die URL im lokalen State "künstlich" erzeugen, um eine Neuanzeige zu triggern.
       // Ein Zeitstempel sorgt für einen einzigartigen Wert.
       const updatedOrderFromServer = await response.json();
+      console.log('Upload response:', updatedOrderFromServer);
+      console.log('Title image in response:', updatedOrderFromServer.titleImage);
       setLocalOrder(updatedOrderFromServer);
 
       dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Titelbild erfolgreich aktualisiert.', type: 'success' } });
@@ -439,6 +467,11 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
         alert('Fehler beim Löschen!');
         return;
       }
+      
+      // Immediately remove the order from the global state
+      dispatch({ type: 'DELETE_ORDER', payload: localOrder.id });
+      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Auftrag erfolgreich gelöscht.', type: 'success' } });
+      
       onClose();
     } catch (err) {
       alert('Netzwerkfehler beim Löschen!');
@@ -457,8 +490,12 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     // Scope anzeigen
     let scope = '';
     if (subTask.scopeType === 'component' && subTask.assignedComponentId) {
-      const component = localOrder.components.find(comp => comp.id === subTask.assignedComponentId);
-      scope = component ? ` → 🔧 ${component.title}` : ' → Unbekanntes Bauteil';
+      const component = localOrder.components?.find(comp => {
+        const compId = comp.id || (comp as any)._id;
+        return compId === subTask.assignedComponentId;
+      });
+      const componentTitle = component ? (component.title || (component as any).name || 'Unbenanntes Bauteil') : 'Unbekanntes Bauteil';
+      scope = ` → 🔧 ${componentTitle}`;
     } else if (subTask.scopeType === 'order') {
       scope = ' → 📋 Gesamtauftrag';
     }
@@ -477,7 +514,8 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
         includeQRCode: true
       });
 
-      const pdfBlob = await pdfGenerator.generatePDF();
+      // PDF als Blob generieren (verwendet generateCombinedPDF für Blob-Output)
+      const pdfBlob = await pdfGenerator.generateCombinedPDF();
       
       // PDF herunterladen
       const url = URL.createObjectURL(pdfBlob);
@@ -549,7 +587,18 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                 <h3 className="text-lg font-semibold text-gray-800 mb-4">Titelbild</h3>
                 <div className="flex items-center gap-6">
                   {titleImageUrl ? (
-                    <img src={titleImageUrl} alt="Titelbild" className="w-32 h-32 object-cover rounded-lg shadow-md" />
+                    <img 
+                      src={titleImageUrl} 
+                      alt="Titelbild" 
+                      className="w-32 h-32 object-cover rounded-lg shadow-md"
+                      onError={(e) => {
+                        console.error('Image failed to load:', titleImageUrl);
+                        setTitleImageUrl(''); // Clear the URL on error
+                      }}
+                      onLoad={() => {
+                        console.log('Image loaded successfully:', titleImageUrl);
+                      }}
+                    />
                   ) : (
                     <div className="w-32 h-32 bg-gray-200 rounded-lg flex items-center justify-center text-gray-500 text-center p-2">
                       Kein Titelbild
@@ -695,8 +744,9 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                     ))}
                     
                     {/* STL Viewers */}
-                    {localOrder.documents.map((doc) => (
-                      isSTLFile(doc.name) && showSTLViewers[doc.id] && (
+                    {localOrder.documents
+                      .filter(doc => isSTLFile(doc.name) && showSTLViewers[doc.id])
+                      .map((doc) => (
                         <div key={`viewer-${doc.id}`} className="mt-2 p-4 bg-gray-50 rounded-lg">
                           <STLViewer
                             fileUrl={`http://localhost:3001${doc.url}`}
@@ -705,8 +755,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                             showControls={true}
                           />
                         </div>
-                      )
-                    ))}
+                      ))}
                   </div>
                 ) : (
                   <p className="text-gray-500 text-sm">Keine Dokumente hochgeladen</p>
@@ -718,10 +767,16 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                 <div>
                   <h4 className="text-md font-semibold text-gray-900 mb-2">Bauteile</h4>
                   <div className="space-y-4">
-                    {localOrder.components.map((component) => (
-                      <div key={component.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                    {localOrder.components.map((component) => {
+                      console.log('Rendering component:', component);
+                      // Use _id if id is not available (backwards compatibility)
+                      const componentId = component.id || (component as any)._id;
+                      // Use title if available, otherwise name (backwards compatibility)  
+                      const componentTitle = component.title || (component as any).name || 'Unbenanntes Bauteil';
+                      return (
+                      <div key={componentId} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
                         <div className="mb-3">
-                          <h5 className="font-medium text-gray-900 text-sm">{component.title}</h5>
+                          <h5 className="font-medium text-gray-900 text-sm">{componentTitle}</h5>
                           {component.description && (
                             <p className="text-gray-600 text-sm mt-1">{component.description}</p>
                           )}
@@ -734,23 +789,114 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                               {component.documents.map((doc) => (
                                 <div key={doc.id} className="flex items-center justify-between p-2 bg-white rounded border text-sm">
                                   <div className="flex items-center">
-                                    <FileText className="w-4 h-4 text-red-600 mr-2" />
-                                    <span className="text-gray-900">{doc.name}</span>
+                                    {getFileIcon(doc.name)}
+                                    <div className="ml-2">
+                                      <span className="text-gray-900">{doc.name}</span>
+                                      <div className="text-xs text-gray-500">
+                                        {getFileTypeDescription(doc.name)} • {new Date(doc.uploadDate).toLocaleDateString('de-DE')}
+                                      </div>
+                                    </div>
                                   </div>
-                                  <button
-                                    onClick={() => handleDownload(doc)}
-                                    className="text-blue-600 hover:text-blue-800 transition-colors flex items-center"
-                                  >
-                                    <Download className="w-3 h-3 mr-1" />
-                                    <span className="text-xs">Download</span>
-                                  </button>
+                                  <div className="flex items-center space-x-2">
+                                    {isSTLFile(doc.name) && (
+                                      <button
+                                        onClick={() => toggleSTLViewer(doc.id)}
+                                        className="text-purple-600 hover:text-purple-800 transition-colors flex items-center text-xs"
+                                      >
+                                        <Eye className="w-3 h-3 mr-1" />
+                                        3D
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => handleDownload(doc)}
+                                      className="text-blue-600 hover:text-blue-800 transition-colors flex items-center text-xs"
+                                    >
+                                      <Download className="w-3 h-3 mr-1" />
+                                      Download
+                                    </button>
+                                  </div>
                                 </div>
                               ))}
+                              
+                              {/* STL Viewers für Component Documents */}
+                              {component.documents
+                                .filter(doc => isSTLFile(doc.name) && showSTLViewers[doc.id])
+                                .map((doc) => (
+                                  <div key={`viewer-${doc.id}`} className="mt-2 p-4 bg-gray-50 rounded-lg">
+                                    <STLViewer
+                                      fileUrl={`http://localhost:3001${doc.url}`}
+                                      fileName={doc.name}
+                                      className="w-full"
+                                      showControls={true}
+                                    />
+                                  </div>
+                                ))}
                             </div>
                           </div>
                         )}
+                        
+                        {/* Component Upload Section */}
+                        <div className="mt-3 pt-3 border-t border-gray-200">
+                          <button
+                            onClick={() => {
+                              if (showComponentUpload && activeComponentId === componentId) {
+                                setShowComponentUpload(false);
+                                setActiveComponentId(null);
+                              } else {
+                                setShowComponentUpload(true);
+                                setActiveComponentId(componentId);
+                              }
+                            }}
+                            className="flex items-center text-xs text-blue-600 hover:text-blue-800"
+                          >
+                            {showComponentUpload && activeComponentId === componentId ? (
+                              <><X className="w-3 h-3 mr-1" /> Abbrechen</>
+                            ) : (
+                              <><Plus className="w-3 h-3 mr-1" /> Datei hochladen</>
+                            )}
+                          </button>
+                          
+                          {showComponentUpload && activeComponentId === componentId && (
+                            <div className="mt-3">
+                              <NetworkFileUpload
+                                orderId={localOrder.id}
+                                componentId={componentId}
+                                uploadType="component"
+                                onUploadSuccess={() => {
+                                  setShowComponentUpload(false);
+                                  setActiveComponentId(null);
+                                  dispatch({
+                                    type: 'SHOW_NOTIFICATION',
+                                    payload: {
+                                      message: 'Bauteil-Dokument erfolgreich hochgeladen',
+                                      type: 'success'
+                                    }
+                                  });
+                                  
+                                  // Reload order to get updated components with documents
+                                  fetch(`http://localhost:3001/api/orders/${localOrder.id}`)
+                                    .then(response => response.json())
+                                    .then(updatedOrder => {
+                                      dispatch({ type: 'UPDATE_ORDER', payload: updatedOrder });
+                                      setLocalOrder(updatedOrder);
+                                      // Dokumente und Komponenten zu changedFields hinzufügen
+                                      setChangedFields(prev => ({
+                                        ...prev,
+                                        documents: updatedOrder.documents,
+                                        components: updatedOrder.components
+                                      }));
+                                    })
+                                    .catch(error => {
+                                      console.error('Error reloading order:', error);
+                                    });
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -835,13 +981,26 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                       <label className="flex items-center">
                         <input
                           type="checkbox"
+                          checked={localOrder.materialAvailable || false}
+                          onChange={(e) => handleFieldChange('materialAvailable', e.target.checked)}
+                          disabled={!canModify && state.currentUser?.role !== 'admin'}
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
+                        />
+                        <span className="ml-3 text-sm text-gray-700">
+                          ✅ Material vorhanden
+                        </span>
+                      </label>
+                      
+                      <label className="flex items-center">
+                        <input
+                          type="checkbox"
                           checked={localOrder.materialOrderedByWorkshop || false}
                           onChange={(e) => handleFieldChange('materialOrderedByWorkshop', e.target.checked)}
                           disabled={!canModify && state.currentUser?.role !== 'admin'}
                           className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
                         />
                         <span className="ml-3 text-sm text-gray-700">
-                          🏭 Material von der Werkstatt bestellt
+                          🏭 Material durch Werkstatt bestellt
                         </span>
                       </label>
                       
@@ -854,11 +1013,11 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                           className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
                         />
                         <span className="ml-3 text-sm text-gray-700">
-                          👤 Material durch den Kunden bestellt
+                          👤 Material selbst bestellen
                         </span>
                         {localOrder.materialOrderedByClient && localOrder.materialOrderedByClientConfirmed && (
                           <span className="ml-2 px-2 py-1 text-xs bg-green-100 text-green-800 rounded-full">
-                            ✓ Vom Kunden bestätigt
+                            ✓ Bestätigt
                           </span>
                         )}
                       </label>
@@ -866,13 +1025,20 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                       <label className="flex items-center">
                         <input
                           type="checkbox"
-                          checked={localOrder.materialAvailable || false}
-                          onChange={(e) => handleFieldChange('materialAvailable', e.target.checked)}
+                          checked={!localOrder.materialAvailable && !localOrder.materialOrderedByWorkshop && !localOrder.materialOrderedByClient}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              // Wenn "kein Material benötigt" aktiviert wird, alle anderen deaktivieren
+                              handleFieldChange('materialAvailable', false);
+                              handleFieldChange('materialOrderedByWorkshop', false);
+                              handleFieldChange('materialOrderedByClient', false);
+                            }
+                          }}
                           disabled={!canModify && state.currentUser?.role !== 'admin'}
                           className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
                         />
                         <span className="ml-3 text-sm text-gray-700">
-                          ✅ Material vorhanden
+                          ❌ Kein Material benötigt
                         </span>
                       </label>
                     </div>
@@ -1038,9 +1204,13 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       >
                         <option value="">Bauteil auswählen</option>
-                        {localOrder.components.map(comp => (
-                          <option key={comp.id} value={comp.id}>{comp.title}</option>
-                        ))}
+                        {localOrder.components?.map(comp => {
+                          const compId = comp.id || (comp as any)._id;
+                          const compTitle = comp.title || (comp as any).name || 'Unbenanntes Bauteil';
+                          return (
+                            <option key={compId} value={compId}>{compTitle}</option>
+                          );
+                        })}
                       </select>
                     </div>
                   )}
@@ -1242,11 +1412,15 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                             className="text-xs px-2 py-1 border border-gray-300 rounded disabled:bg-gray-100"
                           >
                             <option value="">Bauteil auswählen</option>
-                            {localOrder.components.map((comp) => (
-                              <option key={comp.id} value={comp.id}>
-                                {comp.title}
-                              </option>
-                            ))}
+                            {localOrder.components?.map((comp) => {
+                              const compId = comp.id || (comp as any)._id;
+                              const compTitle = comp.title || (comp as any).name || 'Unbenanntes Bauteil';
+                              return (
+                                <option key={compId} value={compId}>
+                                  {compTitle}
+                                </option>
+                              );
+                            })}
                           </select>
                         )}
                         
@@ -1379,6 +1553,11 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
               .then(response => response.json())
               .then(data => {
                 setLocalOrder(data);
+                // Wichtig: Dokumente auch zu changedFields hinzufügen damit sie gespeichert werden
+                setChangedFields(prev => ({
+                  ...prev,
+                  documents: data.documents
+                }));
               })
               .catch(error => {
                 console.error('Error reloading order:', error);

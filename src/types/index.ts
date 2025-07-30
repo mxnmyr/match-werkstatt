@@ -36,8 +36,10 @@ export interface NoteHistory {
 }
 
 export interface Image {
-  id: string;
-  mimeType: string;
+  filename: string;
+  contentType: string;
+  uploadedAt: string;
+  hasImage: boolean;
 }
 
 export interface Order {

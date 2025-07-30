@@ -29,347 +29,272 @@ export class OrderPDFGenerator {
       const orderUrl = `${baseUrl}/#/order/${text}`;
       
       // QR-Code mit der vollständigen URL generieren
-      const qrCodeDataUrl = await QRCode.toDataURL(orderUrl, {
-        width: 200,
-        margin: 2,
+      const qrCodeDataURL = await QRCode.toDataURL(orderUrl, {
+        errorCorrectionLevel: 'M',
+        margin: 1,
         color: {
           dark: '#000000',
           light: '#FFFFFF'
         },
-        errorCorrectionLevel: 'M'
+        width: 200
       });
-      
-      return qrCodeDataUrl;
+      return qrCodeDataURL;
     } catch (error) {
-      console.error('QR-Code generation failed:', error);
-      // Fallback: Einfacher QR-Code mit nur der Auftragsnummer
-      return await QRCode.toDataURL(text, {
-        width: 200,
-        margin: 2
-      });
+      console.error('Error generating QR code:', error);
+      // Fallback QR-Code nur mit Order-ID
+      return await QRCode.toDataURL(text);
     }
   }
 
-  private async createCoverPage(): Promise<jsPDF> {
-    const pdf = new jsPDF('p', 'mm', 'a4');
+  async generatePDF(): Promise<jsPDF> {
+    const pdf = new jsPDF();
     const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
 
-    // Header mit QR-Code
+    // Logo oben links hinzufügen
+    try {
+      // Logo als Base64 laden
+      const logoResponse = await fetch('/src/assets/match-logo.jpg');
+      const logoBlob = await logoResponse.blob();
+      const logoBase64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(logoBlob);
+      });
+      
+      // Logo hinzufügen (oben links, 50x30 px)
+      pdf.addImage(logoBase64, 'JPEG', 20, 10, 50, 30);
+    } catch (error) {
+      console.warn('Logo konnte nicht geladen werden:', error);
+      // Fallback: "MATCH" Text als Logo-Ersatz
+      pdf.setFontSize(16);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('MATCH', 20, 25);
+    }
+
+    // Header mit QR-Code (rechts oben)
     if (this.options.includeQRCode) {
       const qrCodeData = await this.generateQRCode(this.order.orderNumber || this.order.id);
       pdf.addImage(qrCodeData, 'PNG', pageWidth - 80, 10, 70, 70);
     }
 
-    // Titel
-    pdf.setFontSize(24);
-    pdf.setFont('helvetica', 'bold');
-    pdf.text('WERKSTATTAUFTRAG', 20, 30);
-
-    // Auftragsnummer
+    // Auftragsnummer (ohne "WERKSTATTAUFTRAG" Titel)
     pdf.setFontSize(16);
     pdf.setFont('helvetica', 'normal');
-    pdf.text(`Auftragsnummer: ${this.order.orderNumber || this.order.id}`, 20, 45);
+    pdf.text(`Auftragsnummer: ${this.order.orderNumber || this.order.id}`, 20, 50);
 
-    // Auftragsdetails
+    let yPosition = 70;
+
+    // Grunddaten
+    pdf.setFontSize(14);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Grunddaten:', 20, yPosition);
+    yPosition += 10;
+
     pdf.setFontSize(12);
-    let yPos = 60;
+    pdf.setFont('helvetica', 'normal');
     
-    const details = [
-      ['Titel:', this.order.title],
-      ['Auftraggeber:', this.order.clientName],
-      ['Kostenstelle:', this.order.costCenter],
-      ['Deadline:', new Date(this.order.deadline).toLocaleDateString('de-DE')],
-      ['Priorität:', this.getPriorityText(this.order.priority)],
-      ['Status:', this.getStatusText(this.order.status)],
-      ['Geschätzte Stunden:', this.order.estimatedHours?.toString() || 'N/A'],
-      ['Tatsächliche Stunden:', this.order.actualHours?.toString() || 'N/A'],
-      ['Zugewiesen an:', this.order.assignedTo || 'Nicht zugewiesen'],
-      ['Erstellt am:', new Date(this.order.createdAt).toLocaleDateString('de-DE')],
+    const basicData = [
+      `Kunde: ${this.order.clientName || 'Nicht angegeben'}`,
+      `Kostenstelle: ${this.order.costCenter || 'Nicht angegeben'}`,
+      `Deadline: ${this.order.deadline ? new Date(this.order.deadline).toLocaleDateString('de-DE') : 'Nicht angegeben'}`,
+      `Erstellt am: ${this.order.createdAt ? new Date(this.order.createdAt).toLocaleDateString('de-DE') : 'Nicht verfügbar'}`,
+      `Status: ${this.order.status || 'Nicht angegeben'}`,
+      `Priorität: ${this.order.priority || 'medium'}`
     ];
 
-    details.forEach(([label, value]) => {
-      pdf.setFont('helvetica', 'bold');
-      pdf.text(label, 20, yPos);
-      pdf.setFont('helvetica', 'normal');
-      pdf.text(value, 70, yPos);
-      yPos += 8;
+    basicData.forEach(line => {
+      pdf.text(line, 20, yPosition);
+      yPosition += 8;
     });
+
+    yPosition += 10;
 
     // Beschreibung
-    yPos += 10;
-    pdf.setFont('helvetica', 'bold');
-    pdf.text('Beschreibung:', 20, yPos);
-    yPos += 8;
-    pdf.setFont('helvetica', 'normal');
-    
-    // Beschreibung umbrechen
-    const splitDescription = pdf.splitTextToSize(this.order.description, pageWidth - 40);
-    pdf.text(splitDescription, 20, yPos);
-    yPos += splitDescription.length * 6;
-
-    // Notizen falls vorhanden
-    if (this.order.notes) {
-      yPos += 10;
+    if (this.order.description) {
+      pdf.setFontSize(14);
       pdf.setFont('helvetica', 'bold');
-      pdf.text('Notizen:', 20, yPos);
-      yPos += 8;
+      pdf.text('Beschreibung:', 20, yPosition);
+      yPosition += 10;
+
+      pdf.setFontSize(12);
       pdf.setFont('helvetica', 'normal');
-      const splitNotes = pdf.splitTextToSize(this.order.notes, pageWidth - 40);
-      pdf.text(splitNotes, 20, yPos);
-      yPos += splitNotes.length * 6;
-    }
-
-    // Materialstatus
-    yPos += 15;
-    pdf.setFont('helvetica', 'bold');
-    pdf.text('Materialstatus:', 20, yPos);
-    yPos += 8;
-    pdf.setFont('helvetica', 'normal');
-
-    const materialStatus = [
-      ['Material von Werkstatt bestellt:', this.order.materialOrderedByWorkshop ? 'Ja' : 'Nein'],
-      ['Material vom Kunden bestellt:', this.order.materialOrderedByClient ? 'Ja' : 'Nein'],
-      ['Kundenbestellung bestätigt:', this.order.materialOrderedByClientConfirmed ? 'Ja' : 'Nein'],
-      ['Material verfügbar:', this.order.materialAvailable ? 'Ja' : 'Nein']
-    ];
-
-    materialStatus.forEach(([label, value]) => {
-      pdf.text(`${label} ${value}`, 25, yPos);
-      yPos += 6;
-    });
-
-    // Komponenten falls vorhanden
-    if (this.order.components && this.order.components.length > 0) {
-      yPos += 10;
-      pdf.setFont('helvetica', 'bold');
-      pdf.text('Komponenten:', 20, yPos);
-      yPos += 8;
-      pdf.setFont('helvetica', 'normal');
-
-      this.order.components.forEach((component, index) => {
-        pdf.text(`${index + 1}. ${component.title}`, 25, yPos);
-        yPos += 6;
-        if (component.description) {
-          const splitDesc = pdf.splitTextToSize(component.description, pageWidth - 50);
-          pdf.text(splitDesc, 30, yPos);
-          yPos += splitDesc.length * 5;
-        }
-        yPos += 3;
-      });
-    }
-
-    // SubTasks falls vorhanden
-    if (this.order.subTasks && Array.isArray(this.order.subTasks) && this.order.subTasks.length > 0) {
-      yPos += 10;
-      pdf.setFont('helvetica', 'bold');
-      pdf.text('Teilaufgaben:', 20, yPos);
-      yPos += 8;
-      pdf.setFont('helvetica', 'normal');
-
-      this.order.subTasks.forEach((task: any, index: number) => {
-        pdf.text(`${index + 1}. ${task.title}`, 25, yPos);
-        yPos += 6;
-        if (task.description) {
-          const splitDesc = pdf.splitTextToSize(task.description, pageWidth - 50);
-          pdf.text(splitDesc, 30, yPos);
-          yPos += splitDesc.length * 5;
-        }
-        if (task.estimatedHours) {
-          pdf.text(`Geschätzte Stunden: ${task.estimatedHours}`, 30, yPos);
-          yPos += 6;
-        }
-        yPos += 3;
-      });
-    }
-
-    // Footer mit Auftragsnummer und QR-Code
-    if (this.options.includeQRCode) {
-      const footerY = pageHeight - 30;
-      pdf.setFontSize(10);
-      pdf.text(`Auftrag: ${this.order.orderNumber || this.order.id} | ${this.order.clientName}`, 20, footerY);
       
-      const smallQRCodeData = await this.generateQRCode(this.order.orderNumber || this.order.id);
-      pdf.addImage(smallQRCodeData, 'PNG', pageWidth - 35, footerY - 25, 25, 25);
+      const lines = pdf.splitTextToSize(this.order.description, pageWidth - 40);
+      pdf.text(lines, 20, yPosition);
+      yPosition += lines.length * 6 + 10;
+    }
+
+    // Komponenten/Bauteile
+    if (this.options.includeComponents && this.order.components && this.order.components.length > 0) {
+      pdf.setFontSize(14);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Komponenten/Bauteile:', 20, yPosition);
+      yPosition += 10;
+
+      pdf.setFontSize(12);
+      pdf.setFont('helvetica', 'normal');
+
+      this.order.components.forEach((component: any, index: number) => {
+        const name = component.name || component.title || `Komponente ${index + 1}`;
+        const description = component.description || 'Keine Beschreibung';
+        const quantity = component.quantity || 1;
+        
+        pdf.text(`${index + 1}. ${name} (Anzahl: ${quantity})`, 25, yPosition);
+        yPosition += 6;
+        
+        if (description && description !== 'Keine Beschreibung') {
+          const descLines = pdf.splitTextToSize(`   ${description}`, pageWidth - 60);
+          pdf.text(descLines, 25, yPosition);
+          yPosition += descLines.length * 6;
+        }
+        yPosition += 4;
+      });
+      yPosition += 10;
+    }
+
+    // Netzlaufwerk-Ordner Information (entfernt, da nicht im Order-Type vorhanden)
+    // Stattdessen Auftragstyp und weitere Details
+    pdf.setFontSize(14);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Weitere Details:', 20, yPosition);
+    yPosition += 10;
+
+    pdf.setFontSize(12);
+    pdf.setFont('helvetica', 'normal');
+    pdf.text(`Auftragstyp: ${this.order.orderType || 'Nicht angegeben'}`, 20, yPosition);
+    yPosition += 8;
+    pdf.text(`Geschätzte Stunden: ${this.order.estimatedHours || 0}`, 20, yPosition);
+    yPosition += 8;
+    if (this.order.actualHours) {
+      pdf.text(`Tatsächliche Stunden: ${this.order.actualHours}`, 20, yPosition);
+      yPosition += 8;
+    }
+    yPosition += 10;
+
+    // Dokumente
+    if (this.options.includeDocuments && this.order.documents && this.order.documents.length > 0) {
+      pdf.setFontSize(14);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Anhänge:', 20, yPosition);
+      yPosition += 10;
+
+      pdf.setFontSize(12);
+      pdf.setFont('helvetica', 'normal');
+      
+      this.order.documents.forEach((doc: any, index: number) => {
+        const fileName = doc.name || `Dokument ${index + 1}`;
+        pdf.text(`${index + 1}. ${fileName}`, 25, yPosition);
+        yPosition += 8;
+      });
     }
 
     return pdf;
   }
 
-  private async fetchDocumentAsArrayBuffer(documentId: string): Promise<ArrayBuffer> {
-    const response = await fetch(`http://localhost:3001/api/documents/${documentId}`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch document ${documentId}: ${response.statusText}`);
+  async generateCombinedPDF(): Promise<Blob> {
+    if (!this.options.includeDocuments || !this.order.documents || this.order.documents.length === 0) {
+      // Nur das Deckblatt generieren
+      const pdf = await this.generatePDF();
+      return new Blob([pdf.output('arraybuffer')], { type: 'application/pdf' });
     }
-    return await response.arrayBuffer();
-  }
 
-  private async mergeDocuments(coverPdf: jsPDF): Promise<Uint8Array> {
-    const pdfDoc = await PDFDocument.create();
-    
-    // Cover Page hinzufügen
-    const coverBytes = new Uint8Array(coverPdf.output('arraybuffer'));
-    const coverPdfDoc = await PDFDocument.load(coverBytes);
-    const coverPages = await pdfDoc.copyPages(coverPdfDoc, coverPdfDoc.getPageIndices());
-    coverPages.forEach((page) => pdfDoc.addPage(page));
+    try {
+      // Deckblatt erstellen
+      const coverPdf = await this.generatePDF();
+      const coverBytes = coverPdf.output('arraybuffer');
 
-    // 1. Hauptdokumente des Auftrags hinzufügen
-    if (this.options.includeDocuments && this.order.documents && this.order.documents.length > 0) {
-      console.log('Merging order documents. Count:', this.order.documents.length);
-      
+      // Neues PDF-Dokument erstellen
+      const pdfDoc = await PDFDocument.create();
+
+      // Deckblatt hinzufügen
+      const coverPdfDoc = await PDFDocument.load(coverBytes);
+      const coverPages = await pdfDoc.copyPages(coverPdfDoc, [0]);
+      coverPages.forEach((page) => pdfDoc.addPage(page));
+
+      // Dokumente hinzufügen
       for (const document of this.order.documents) {
-        await this.addDocumentToMergedPDF(pdfDoc, document, 'Auftragsdokument');
-      }
-    }
-
-    // 2. Bauteil-Zeichnungen hinzufügen (falls gewünscht)
-    if (this.options.includeComponents && this.order.components && this.order.components.length > 0) {
-      console.log('Merging component documents. Component count:', this.order.components.length);
-      
-      for (const component of this.order.components) {
-        if (component.documents && component.documents.length > 0) {
-          console.log(`Processing component "${component.title}" with ${component.documents.length} documents`);
-          
-          for (const document of component.documents) {
-            await this.addDocumentToMergedPDF(pdfDoc, document, `Bauteil: ${component.title}`);
-          }
+        try {
+          await this.addDocumentToMergedPDF(pdfDoc, document, 'Anhang');
+        } catch (error) {
+          console.warn(`Dokument ${document.name} konnte nicht hinzugefügt werden:`, error);
         }
       }
+
+      const pdfBytes = await pdfDoc.save();
+      return new Blob([pdfBytes], { type: 'application/pdf' });
+
+    } catch (error) {
+      console.error('Fehler beim Erstellen des kombinierten PDFs:', error);
+      // Fallback: Nur das Deckblatt zurückgeben
+      const pdf = await this.generatePDF();
+      return new Blob([pdf.output('arraybuffer')], { type: 'application/pdf' });
     }
-
-    return pdfDoc.save();
-  }
-
-  // Hilfsfunktion: Prüft ob eine Datei eine PDF ist
-  private isPDFFile(fileName: string): boolean {
-    return fileName.toLowerCase().endsWith('.pdf');
   }
 
   private async addDocumentToMergedPDF(pdfDoc: PDFDocument, document: any, documentType: string): Promise<void> {
     try {
-      console.log(`Processing ${documentType}:`, document.name, 'ID:', document.id);
+      // Dokument vom Server laden
+      const response = await fetch(`/api/orders/${this.order.id}/documents/${document.name}`);
       
-      // Nur PDF-Dateien verarbeiten, andere Dateien überspringen
-      if (!this.isPDFFile(document.name)) {
-        console.log(`Skipping non-PDF file: ${document.name}`);
-        return;
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
-      const docBuffer = await this.fetchDocumentAsArrayBuffer(document.id);
-      console.log('Document buffer size:', docBuffer.byteLength);
-      
+
+      const docBuffer = await response.arrayBuffer();
       const docPdf = await PDFDocument.load(docBuffer);
-      const pageCount = docPdf.getPageCount();
-      console.log('Document has', pageCount, 'pages');
       
-      const pages = await pdfDoc.copyPages(docPdf, docPdf.getPageIndices());
+      const docPages = await pdfDoc.copyPages(docPdf, docPdf.getPageIndices());
+      docPages.forEach((page) => pdfDoc.addPage(page));
+
+    } catch (error) {
+      console.error(`Fehler beim Hinzufügen des Dokuments ${document.name}:`, error);
       
-      // QR-Code für Header generieren und als PDF-Image vorbereiten
-      const qrCodeDataUrl = await this.generateQRCode(this.order.orderNumber || this.order.id);
-      let qrCodeImage: any = null;
+      // Fallback: Eine Seite mit Fehlermeldung hinzufügen
+      const page = pdfDoc.addPage();
+      const { height } = page.getSize();
       
-      try {
-        // QR-Code als PNG-Bytes konvertieren und in PDF einbetten
-        const qrCodeBase64 = qrCodeDataUrl.split(',')[1];
-        const qrCodeBytes = Uint8Array.from(atob(qrCodeBase64), c => c.charCodeAt(0));
-        qrCodeImage = await pdfDoc.embedPng(qrCodeBytes);
-      } catch (qrError) {
-        console.warn('Could not embed QR code in component document:', qrError);
-      }
-      
-      pages.forEach((page, index) => {
-        console.log(`Adding page ${index + 1} of ${pageCount} from ${document.name} (${documentType})`);
-        
-        const { width, height } = page.getSize();
-        
-        // Header-Hintergrund (leicht transparent)
-        page.drawRectangle({
-          x: 0,
-          y: height - 50,
-          width: width,
-          height: 50,
-          color: rgb(0.95, 0.95, 0.95),
-          opacity: 0.8
-        });
-        
-        // QR-Code in der rechten Ecke des Headers hinzufügen
-        if (qrCodeImage) {
-          try {
-            page.drawImage(qrCodeImage, {
-              x: width - 65,
-              y: height - 45,
-              width: 40,
-              height: 40
-            });
-          } catch (qrDrawError) {
-            console.warn('Could not draw QR code image:', qrDrawError);
-          }
-        }
-        
-        // Header-Text links
-        page.drawText(`${this.order.title}`, {
-          x: 15,
-          y: height - 20,
-          size: 12,
-          color: rgb(0.2, 0.2, 0.2)
-        });
-        
-        page.drawText(`${documentType} | Kunde: ${this.order.clientName} | Nr: ${this.order.orderNumber || this.order.id}`, {
-          x: 15,
-          y: height - 35,
-          size: 10,
-          color: rgb(0.4, 0.4, 0.4)
-        });
-        
-        // Trennlinie unter dem Header
-        page.drawLine({
-          start: { x: 10, y: height - 52 },
-          end: { x: width - 10, y: height - 52 },
-          thickness: 1,
-          color: rgb(0.7, 0.7, 0.7)
-        });
-        
-        pdfDoc.addPage(page);
+      page.drawText(`${documentType}: ${document.name}`, {
+        x: 50,
+        y: height - 100,
+        size: 16,
+        color: rgb(0, 0, 0),
       });
       
-    } catch (error) {
-      console.error(`Error processing ${documentType} ${document.name}:`, error);
-      // Weitermachen mit dem nächsten Dokument
+      page.drawText('Dokument konnte nicht geladen werden.', {
+        x: 50,
+        y: height - 130,
+        size: 12,
+        color: rgb(0.7, 0, 0),
+      });
     }
   }
 
-  public async generatePDF(): Promise<Blob> {
+  async downloadPDF(filename?: string): Promise<void> {
     try {
-      const coverPdf = await this.createCoverPage();
-      const finalPdfBytes = await this.mergeDocuments(coverPdf);
+      const pdfBlob = await this.generateCombinedPDF();
+      const url = URL.createObjectURL(pdfBlob);
       
-      return new Blob([finalPdfBytes], { type: 'application/pdf' });
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename || `Auftrag_${this.order.orderNumber || this.order.id}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Error generating PDF:', error);
+      console.error('Fehler beim Herunterladen des PDFs:', error);
       throw error;
     }
   }
 
-  private getPriorityText(priority: string): string {
-    switch (priority) {
-      case 'low': return 'Niedrig';
-      case 'medium': return 'Mittel';
-      case 'high': return 'Hoch';
-      case 'urgent': return 'Dringend';
-      default: return priority;
-    }
-  }
-
-  private getStatusText(status: string): string {
-    switch (status) {
-      case 'pending': return 'Ausstehend';
-      case 'accepted': return 'Angenommen';
-      case 'in_progress': return 'In Bearbeitung';
-      case 'revision': return 'Überarbeitung';
-      case 'rework': return 'Nacharbeit';
-      case 'completed': return 'Abgeschlossen';
-      case 'archived': return 'Archiviert';
-      default: return status;
+  async generatePreviewURL(): Promise<string> {
+    try {
+      const pdfBlob = await this.generateCombinedPDF();
+      return URL.createObjectURL(pdfBlob);
+    } catch (error) {
+      console.error('Fehler beim Erstellen der PDF-Vorschau:', error);
+      throw error;
     }
   }
 }

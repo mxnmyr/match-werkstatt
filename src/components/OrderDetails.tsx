@@ -128,12 +128,25 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
   // Materialstatus aktualisieren (nur für Kunden-Checkbox)
   const handleMaterialStatusUpdate = async (field: 'materialOrderedByClientConfirmed', value: boolean) => {
     try {
+      // Sofort lokalen State aktualisieren für bessere UX
+      const updatedOrder = { ...currentOrder, [field]: value };
+      dispatch({ type: 'UPDATE_ORDER', payload: updatedOrder });
+      
       const response = await fetch(`http://localhost:3001/api/orders/${currentOrder.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [field]: value }),
       });
-      if (!response.ok) throw new Error('Fehler beim Aktualisieren');
+      
+      if (!response.ok) {
+        // Bei Fehler den ursprünglichen Zustand wiederherstellen
+        dispatch({ type: 'UPDATE_ORDER', payload: currentOrder });
+        throw new Error('Fehler beim Aktualisieren');
+      }
+      
+      // Erfolgreiche Antwort vom Server verwenden
+      const serverResponse = await response.json();
+      dispatch({ type: 'UPDATE_ORDER', payload: serverResponse });
       dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Materialstatus aktualisiert!', type: 'success' } });
     } catch (err) {
       dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Fehler beim Aktualisieren!', type: 'error' } });
@@ -155,6 +168,11 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
         alert('Fehler beim Löschen!');
         return;
       }
+      
+      // Immediately remove the order from the global state
+      dispatch({ type: 'DELETE_ORDER', payload: currentOrder.id });
+      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Auftrag erfolgreich gelöscht.', type: 'success' } });
+      
       onClose();
     } catch (err) {
       alert('Netzwerkfehler beim Löschen!');
@@ -305,7 +323,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <span className="text-sm text-gray-600">Auftrags-Nr.</span>
-                    <h4 className="text-xl font-bold text-gray-900">{currentOrder.id}</h4>
+                    <h4 className="text-xl font-bold text-gray-900">{currentOrder.orderNumber || currentOrder.id}</h4>
                   </div>
                   <div>
                     <span className="text-sm text-gray-600">Status</span>
@@ -677,7 +695,16 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                 <div className="bg-gray-50 rounded-lg p-4 space-y-3 border">
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-gray-700 flex items-center">
-                      🏭 Material von der Werkstatt bestellt
+                      ✅ Material vorhanden
+                    </span>
+                    <span className={`px-2 py-1 text-xs rounded-full ${currentOrder.materialAvailable ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                      {currentOrder.materialAvailable ? 'Ja' : 'Nein'}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-700 flex items-center">
+                      🏭 Material durch Werkstatt bestellt
                     </span>
                     <span className={`px-2 py-1 text-xs rounded-full ${currentOrder.materialOrderedByWorkshop ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
                       {currentOrder.materialOrderedByWorkshop ? 'Ja' : 'Nein'}
@@ -686,7 +713,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                   
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-gray-700 flex items-center">
-                      👤 Material durch den Kunden bestellt
+                      👤 Material selbst bestellen
                     </span>
                     {/* Checkbox nur anzeigen, wenn Werkstatt diese Option aktiviert hat */}
                     {currentOrder.materialOrderedByClient ? (
@@ -697,7 +724,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                           onChange={(e) => handleMaterialStatusUpdate('materialOrderedByClientConfirmed', e.target.checked)}
                           className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                         />
-                        <span className="ml-2 text-sm text-gray-700">Material bestellt</span>
+                        <span className="ml-2 text-sm text-gray-700">Material bestellt ✓</span>
                       </label>
                     ) : (
                       <span className="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-800">
@@ -705,15 +732,18 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                       </span>
                     )}
                   </div>
-                  
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-700 flex items-center">
-                      ✅ Material vorhanden
-                    </span>
-                    <span className={`px-2 py-1 text-xs rounded-full ${currentOrder.materialAvailable ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
-                      {currentOrder.materialAvailable ? 'Ja' : 'Nein'}
-                    </span>
-                  </div>
+
+                  {/* Kein Material benötigt - nur anzeigen wenn alle anderen false sind */}
+                  {!currentOrder.materialAvailable && !currentOrder.materialOrderedByWorkshop && !currentOrder.materialOrderedByClient && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-gray-700 flex items-center">
+                        ❌ Kein Material benötigt
+                      </span>
+                      <span className="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">
+                        Bestätigt
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 

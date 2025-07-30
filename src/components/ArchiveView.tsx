@@ -17,9 +17,30 @@ export default function ArchiveView({ onClose }: { onClose: () => void }) {
     return undefined; // Kein Bild vorhanden
   };
 
-  const handleRestore = (order: Order) => {
-    dispatch({ type: 'UPDATE_ORDER', payload: { ...order, status: 'revision' } });
-    dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Auftrag zur Nachbearbeitung freigegeben', type: 'info' } });
+  const handleRestore = async (order: Order) => {
+    try {
+      // Update server first
+      const response = await fetch(`http://localhost:3001/api/orders/${order.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'revision' })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: `Fehler: ${errorData.error || 'Unbekannt'}`, type: 'error' } });
+        return;
+      }
+      
+      // Get updated order from server response
+      const updatedOrder = await response.json();
+      
+      // Update local state with server response
+      dispatch({ type: 'UPDATE_ORDER', payload: updatedOrder });
+      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Auftrag zur Nachbearbeitung freigegeben', type: 'success' } });
+    } catch (error) {
+      dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Netzwerkfehler beim Wiederherstellen des Auftrags', type: 'error' } });
+    }
   };
 
   if (selectedOrder) {

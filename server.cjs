@@ -195,6 +195,63 @@ app.patch('/api/users/:id/approve', async (req, res) => {
   }
 });
 
+app.put('/api/users/:id', async (req, res) => {
+  try {
+    console.log('PUT /api/users/:id - ID:', req.params.id);
+    console.log('PUT /api/users/:id - Body:', req.body);
+    
+    const { client, db } = await getDB();
+    const { username, password, name, company, email, role, isActive } = req.body;
+    
+    // Check if user exists first
+    const existingUser = await db.collection('User').findOne({ _id: new ObjectId(req.params.id) });
+    if (!existingUser) {
+      await client.close();
+      console.log('User not found with ID:', req.params.id);
+      return res.status(404).json({ error: 'User nicht gefunden' });
+    }
+    
+    const updateData = {
+      updatedAt: new Date()
+    };
+    
+    // Only include fields that are provided
+    if (username !== undefined) updateData.username = username;
+    if (password !== undefined && password !== '') updateData.password = password;
+    if (name !== undefined) updateData.name = name;
+    if (company !== undefined) updateData.company = company;
+    if (email !== undefined) updateData.email = email;
+    if (role !== undefined) updateData.role = role;
+    if (isActive !== undefined) updateData.isActive = isActive;
+    
+    console.log('Update data:', updateData);
+    
+    const result = await db.collection('User').updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: updateData }
+    );
+    
+    console.log('Update result:', result);
+    
+    if (result.matchedCount === 0) {
+      await client.close();
+      return res.status(404).json({ error: 'User nicht gefunden' });
+    }
+    
+    // Get updated user
+    const updatedUser = await db.collection('User').findOne({ _id: new ObjectId(req.params.id) });
+    await client.close();
+    
+    const responseUser = convertMongoDoc(updatedUser);
+    
+    console.log('Returning updated user:', responseUser);
+    res.json(responseUser);
+  } catch (err) {
+    console.error('PUT /api/users/:id error:', err);
+    res.status(500).json({ error: 'Fehler beim Aktualisieren des Nutzers', details: err.message });
+  }
+});
+
 app.delete('/api/users/:id', async (req, res) => {
   try {
     const { client, db } = await getDB();
@@ -253,7 +310,14 @@ app.get('/api/orders', async (req, res) => {
         components: components,
         noteHistory: noteHistory,
         revisionHistory: order.revisionHistory || [],
-        reworkComments: order.reworkComments || []
+        reworkComments: order.reworkComments || [],
+        // Include title image metadata (not binary data) for frontend
+        titleImage: order.titleImage ? {
+          filename: order.titleImage.filename,
+          contentType: order.titleImage.contentType,
+          uploadedAt: order.titleImage.uploadedAt,
+          hasImage: true
+        } : null
       };
     }));
     
@@ -302,10 +366,10 @@ app.get('/api/orders/:id', async (req, res) => {
         componentId: new ObjectId(component._id) 
       }).toArray();
       
+      const { _id, ...componentWithoutId } = component;
       return {
-        ...component,
-        id: component._id.toString(),
-        _id: undefined,
+        ...componentWithoutId,
+        id: _id.toString(),
         documents: compDocuments
       };
     }));
@@ -320,7 +384,14 @@ app.get('/api/orders/:id', async (req, res) => {
       components: enrichedComponents,
       noteHistory: noteHistory,
       revisionHistory: order.revisionHistory || [],
-      reworkComments: order.reworkComments || []
+      reworkComments: order.reworkComments || [],
+      // Include title image metadata (not binary data) for frontend
+      titleImage: order.titleImage ? {
+        filename: order.titleImage.filename,
+        contentType: order.titleImage.contentType,
+        uploadedAt: order.titleImage.uploadedAt,
+        hasImage: true
+      } : null
     };
     
     console.log('GET /api/orders/:id - Loaded order from MongoDB:', enrichedOrder.id);
@@ -328,6 +399,93 @@ app.get('/api/orders/:id', async (req, res) => {
   } catch (err) {
     console.error('GET /api/orders/:id error:', err);
     res.status(500).json({ error: 'Fehler beim Laden des Auftrags', details: err.message });
+  }
+});
+
+// GET /api/orders/barcode/:code - Find order by orderNumber or id
+app.get('/api/orders/barcode/:code', async (req, res) => {
+  try {
+    const { client, db } = await getDB();
+    const code = req.params.code;
+    
+    console.log('Searching for order with barcode/orderNumber:', code);
+    
+    // Search by orderNumber first, then by id
+    let order = await db.collection('Order').findOne({ orderNumber: code });
+    
+    if (!order) {
+      // Try to search by id if it's a valid ObjectId
+      try {
+        if (ObjectId.isValid(code)) {
+          order = await db.collection('Order').findOne({ _id: new ObjectId(code) });
+        }
+      } catch (err) {
+        console.log('Invalid ObjectId format:', code);
+      }
+    }
+    
+    if (!order) {
+      await client.close();
+      return res.status(404).json({ error: 'Auftrag mit diesem Code nicht gefunden' });
+    }
+    
+    // Load relations (similar to GET /api/orders/:id)
+    let documents = order.documents || [];
+    if (documents.length === 0) {
+      documents = await db.collection('Document').find({ 
+        orderId: new ObjectId(order._id) 
+      }).toArray();
+    }
+    
+    const components = await db.collection('Component').find({ 
+      orderId: new ObjectId(order._id) 
+    }).toArray();
+    
+    const noteHistory = await db.collection('NoteHistory').find({ 
+      orderId: new ObjectId(order._id) 
+    })
+    .sort({ createdAt: -1 })
+    .toArray();
+    
+    // Enrich components with their documents
+    const enrichedComponents = await Promise.all(components.map(async (component) => {
+      const compDocuments = await db.collection('Document').find({ 
+        componentId: new ObjectId(component._id) 
+      }).toArray();
+      
+      const { _id, ...componentWithoutId } = component;
+      return {
+        ...componentWithoutId,
+        id: _id.toString(),
+        documents: compDocuments
+      };
+    }));
+    
+    await client.close();
+    
+    const enrichedOrder = {
+      ...order,
+      id: order._id.toString(),
+      _id: undefined,
+      documents: documents,
+      components: enrichedComponents,
+      noteHistory: noteHistory,
+      revisionHistory: order.revisionHistory || [],
+      reworkComments: order.reworkComments || [],
+      // Include title image metadata (not binary data) for frontend
+      titleImage: order.titleImage ? {
+        filename: order.titleImage.filename,
+        contentType: order.titleImage.contentType,
+        uploadedAt: order.titleImage.uploadedAt,
+        hasImage: true
+      } : null
+    };
+    
+    console.log('GET /api/orders/barcode/:code - Found order:', enrichedOrder.orderNumber || enrichedOrder.id);
+    res.json(enrichedOrder);
+  } catch (err) {
+    console.error('GET /api/orders/barcode/:code error:', err);
+    res.status(500).json({ error: 'Fehler beim Suchen des Auftrags', details: err.message });
   }
 });
 
@@ -339,17 +497,23 @@ app.put('/api/orders/:id', async (req, res) => {
     
     console.log('=== PUT /api/orders/:id RECEIVED ===');
     console.log('Order ID:', req.params.id);
+    console.log('Full request body keys:', Object.keys(req.body));
     console.log('Documents in request:', req.body.documents);
+    console.log('Request body length:', JSON.stringify(req.body).length);
     
     // Extract allowed fields
     const {
       title, description, clientId, clientName, deadline, costCenter,
       priority, status, estimatedHours, actualHours, assignedTo, notes,
-      orderType, subTasks, documents, revisionRequest, revisionComment,
+      orderType, subTasks, documents, components, revisionRequest, revisionComment,
       userId, userName, materialOrderedByWorkshop, materialOrderedByClient,
       materialOrderedByClientConfirmed, materialAvailable, confirmationNote,
-      confirmationDate, canEdit
+      confirmationDate, canEdit, titleImage
     } = req.body;
+    
+    console.log('Extracted documents:', documents);
+    console.log('Documents type:', typeof documents);
+    console.log('Documents is array:', Array.isArray(documents));
 
     // Get existing order
     const existingOrder = await ordersCollection.findOne({ _id: new ObjectId(req.params.id) });
@@ -370,21 +534,24 @@ app.put('/api/orders/:id', async (req, res) => {
       console.log('Case 1: Workshop revision being processed...');
       revisionHistory.push({
         comment: revisionComment,
-        date: new Date().toISOString(),
         userId: effectiveUserId,
-        userName: effectiveUserName
+        userName: effectiveUserName,
+        createdAt: new Date().toISOString() // Changed from 'date' to 'createdAt' for consistency
       });
+      console.log('Added revision comment to history:', revisionHistory[revisionHistory.length - 1]);
     }
 
     // Case 2: Client sends order back to workshop after revision
-    if (status === 'rework' && revisionRequest && effectiveUserId && effectiveUserName) {
+    if (status === 'rework' && (revisionRequest || revisionComment) && effectiveUserId && effectiveUserName) {
       console.log('Case 2: Client rework being processed...');
       reworkComments.push({
-        comment: revisionRequest,
-        date: new Date().toISOString(),
+        comment: revisionRequest || revisionComment, // Accept both field names
         userId: effectiveUserId,
-        userName: effectiveUserName
+        userName: effectiveUserName,
+        createdAt: new Date().toISOString(),
+        documents: [] // Initialize with empty documents array
       });
+      console.log('Added rework comment to array:', reworkComments[reworkComments.length - 1]);
     }
 
     // Build update data
@@ -405,6 +572,15 @@ app.put('/api/orders/:id', async (req, res) => {
     if (notes !== undefined) updateData.notes = notes;
     if (orderType !== undefined) updateData.orderType = orderType;
     if (subTasks !== undefined) updateData.subTasks = subTasks || [];
+    
+    // Handle title image deletion (when titleImage is explicitly set to null)
+    if (titleImage !== undefined) {
+      if (titleImage === null) {
+        updateData.titleImage = null;
+        console.log('Title image deletion requested');
+      }
+      // Note: title image upload is handled by separate endpoint
+    }
     
     // Documents with type field
     if (documents !== undefined) {
@@ -433,6 +609,56 @@ app.put('/api/orders/:id', async (req, res) => {
       });
     }
     
+    // Handle components updates
+    if (components !== undefined) {
+      console.log('PUT /api/orders/:id - Processing components:', components?.length || 0);
+      
+      // Delete existing components and their documents
+      const existingComponents = await db.collection('Component').find({ 
+        orderId: new ObjectId(req.params.id) 
+      }).toArray();
+      
+      for (const comp of existingComponents) {
+        await db.collection('Document').deleteMany({ 
+          componentId: new ObjectId(comp._id) 
+        });
+      }
+      
+      await db.collection('Component').deleteMany({ 
+        orderId: new ObjectId(req.params.id) 
+      });
+      
+      // Create new components
+      if (components && components.length > 0) {
+        for (const component of components) {
+          const newComponent = {
+            title: component.title || component.name,
+            description: component.description || '',
+            material: component.material || '',
+            quantity: component.quantity || 1,
+            notes: component.notes || '',
+            orderId: new ObjectId(req.params.id),
+            createdAt: new Date(),
+            updatedAt: new Date()
+          };
+          
+          const componentResult = await db.collection('Component').insertOne(newComponent);
+          
+          // Create component documents if provided
+          if (component.documents && component.documents.length > 0) {
+            const componentDocuments = component.documents.map(doc => ({
+              name: doc.name,
+              url: doc.url,
+              uploadDate: doc.uploadDate ? new Date(doc.uploadDate) : new Date(),
+              componentId: componentResult.insertedId,
+              orderId: new ObjectId(req.params.id)
+            }));
+            await db.collection('Document').insertMany(componentDocuments);
+          }
+        }
+      }
+    }
+    
     if (materialOrderedByWorkshop !== undefined) updateData.materialOrderedByWorkshop = materialOrderedByWorkshop;
     if (materialOrderedByClient !== undefined) updateData.materialOrderedByClient = materialOrderedByClient;
     if (materialOrderedByClientConfirmed !== undefined) updateData.materialOrderedByClientConfirmed = materialOrderedByClientConfirmed;
@@ -446,12 +672,33 @@ app.put('/api/orders/:id', async (req, res) => {
     updateData.reworkComments = reworkComments;
 
     console.log('PUT /api/orders/:id updateData documents:', updateData.documents?.length || 0);
+    console.log('PUT /api/orders/:id - Final reworkComments count:', reworkComments.length);
+    if (reworkComments.length > 0) {
+      console.log('PUT /api/orders/:id - Latest rework comment:', reworkComments[reworkComments.length - 1]);
+    }
+    
+    // Prepare update operations
+    const updateOperations = {};
+    
+    // Handle title image deletion separately
+    if (titleImage === null) {
+      updateOperations.$unset = { titleImage: "" };
+      // Remove titleImage from regular updateData to avoid conflicts
+      delete updateData.titleImage;
+    }
+    
+    // Regular field updates
+    if (Object.keys(updateData).length > 0) {
+      updateOperations.$set = updateData;
+    }
     
     // Update in MongoDB
-    await ordersCollection.updateOne(
-      { _id: new ObjectId(req.params.id) },
-      { $set: updateData }
-    );
+    if (Object.keys(updateOperations).length > 0) {
+      await ordersCollection.updateOne(
+        { _id: new ObjectId(req.params.id) },
+        updateOperations
+      );
+    }
 
     // Get updated order
     const updatedOrder = await ordersCollection.findOne({ _id: new ObjectId(req.params.id) });
@@ -461,12 +708,168 @@ app.put('/api/orders/:id', async (req, res) => {
       return res.status(404).json({ error: 'Order not found after update' });
     }
 
-    const responseOrder = convertMongoDoc(updatedOrder);
+    const responseOrder = {
+      ...updatedOrder,
+      id: updatedOrder._id.toString(),
+      _id: undefined,
+      // Include title image metadata (not binary data) for frontend
+      titleImage: updatedOrder.titleImage ? {
+        filename: updatedOrder.titleImage.filename,
+        contentType: updatedOrder.titleImage.contentType,
+        uploadedAt: updatedOrder.titleImage.uploadedAt,
+        hasImage: true
+      } : null
+    };
+    
     console.log('Final response documents:', responseOrder.documents?.length || 0);
     res.json(responseOrder);
   } catch (err) {
     console.error('PUT /api/orders/:id error:', err);
     res.status(500).json({ error: 'Fehler beim Aktualisieren des Auftrags', details: err.message });
+  }
+});
+
+// POST /api/orders/:id/upload-title-image - Upload title image for order
+app.post('/api/orders/:id/upload-title-image', memoryUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Keine Datei hochgeladen' });
+    }
+
+    const orderId = req.params.id;
+    console.log('Uploading title image for order:', orderId, 'File:', req.file.originalname);
+
+    // Validate file type (only images)
+    if (!req.file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: 'Nur Bilddateien sind erlaubt' });
+    }
+
+    const { client, db } = await getDB();
+    
+    // Update order with title image data
+    const updateResult = await db.collection('Order').updateOne(
+      { _id: new ObjectId(orderId) },
+      { 
+        $set: { 
+          titleImage: {
+            data: req.file.buffer,
+            contentType: req.file.mimetype,
+            filename: req.file.originalname,
+            uploadedAt: new Date()
+          }
+        } 
+      }
+    );
+
+    if (updateResult.matchedCount === 0) {
+      await client.close();
+      return res.status(404).json({ error: 'Auftrag nicht gefunden' });
+    }
+
+    // Fetch updated order to return
+    const updatedOrder = await db.collection('Order').findOne({ _id: new ObjectId(orderId) });
+    
+    // Load relations like in GET /api/orders/:id
+    let documents = updatedOrder.documents || [];
+    if (documents.length === 0) {
+      documents = await db.collection('Document').find({ 
+        orderId: new ObjectId(orderId) 
+      }).toArray();
+    }
+    
+    const components = await db.collection('Component').find({ 
+      orderId: new ObjectId(orderId) 
+    }).toArray();
+    
+    const noteHistory = await db.collection('NoteHistory').find({ 
+      orderId: new ObjectId(orderId) 
+    })
+    .sort({ createdAt: -1 })
+    .toArray();
+    
+    // Enrich components with their documents
+    const enrichedComponents = await Promise.all(components.map(async (component) => {
+      const compDocuments = await db.collection('Document').find({ 
+        componentId: new ObjectId(component._id) 
+      }).toArray();
+      
+      const { _id, ...componentWithoutId } = component;
+      return {
+        ...componentWithoutId,
+        id: _id.toString(),
+        documents: compDocuments
+      };
+    }));
+    
+    await client.close();
+    
+    const responseOrder = {
+      ...updatedOrder,
+      id: updatedOrder._id.toString(),
+      _id: undefined,
+      documents: documents,
+      components: enrichedComponents,
+      noteHistory: noteHistory,
+      revisionHistory: updatedOrder.revisionHistory || [],
+      reworkComments: updatedOrder.reworkComments || [],
+      // Include title image metadata (not binary data) for frontend
+      titleImage: updatedOrder.titleImage ? {
+        filename: updatedOrder.titleImage.filename,
+        contentType: updatedOrder.titleImage.contentType,
+        uploadedAt: updatedOrder.titleImage.uploadedAt,
+        hasImage: true
+      } : null
+    };
+    
+    console.log('Title image uploaded successfully for order:', orderId);
+    res.json(responseOrder);
+  } catch (err) {
+    console.error('POST /api/orders/:id/upload-title-image error:', err);
+    res.status(500).json({ error: 'Fehler beim Upload des Titelbildes', details: err.message });
+  }
+});
+
+// GET /api/orders/:id/title-image - Serve title image for order
+app.get('/api/orders/:id/title-image', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const { client, db } = await getDB();
+    
+    const order = await db.collection('Order').findOne({ _id: new ObjectId(orderId) });
+    
+    if (!order || !order.titleImage || !order.titleImage.data) {
+      await client.close();
+      return res.status(404).json({ error: 'Titelbild nicht gefunden' });
+    }
+    
+    await client.close();
+    
+    // Handle different buffer formats from MongoDB
+    let imageBuffer;
+    if (Buffer.isBuffer(order.titleImage.data)) {
+      imageBuffer = order.titleImage.data;
+    } else if (order.titleImage.data.buffer) {
+      // Handle MongoDB Binary type
+      imageBuffer = Buffer.from(order.titleImage.data.buffer);
+    } else {
+      // Fallback: try to create buffer from data
+      imageBuffer = Buffer.from(order.titleImage.data);
+    }
+    
+    const contentLength = imageBuffer.length;
+    console.log('Serving title image for order:', orderId, 'Size:', contentLength, 'bytes', 'Type:', order.titleImage.contentType);
+    
+    // Set proper headers for image response
+    res.set({
+      'Content-Type': order.titleImage.contentType || 'image/jpeg',
+      'Content-Length': contentLength.toString(),
+      'Cache-Control': 'public, max-age=31536000' // Cache for 1 year
+    });
+    
+    res.send(imageBuffer);
+  } catch (err) {
+    console.error('GET /api/orders/:id/title-image error:', err);
+    res.status(500).json({ error: 'Fehler beim Laden des Titelbildes', details: err.message });
   }
 });
 
@@ -538,6 +941,38 @@ app.post('/api/orders', async (req, res) => {
       await db.collection('Document').insertMany(documentObjects);
     }
     
+    // Create components separately if needed
+    if (components && components.length > 0) {
+      console.log('POST /api/orders - Creating components:', components.length);
+      
+      for (const component of components) {
+        const newComponent = {
+          title: component.title || component.name,
+          description: component.description || '',
+          material: component.material || '',
+          quantity: component.quantity || 1,
+          notes: component.notes || '',
+          orderId: result.insertedId,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+        
+        const componentResult = await db.collection('Component').insertOne(newComponent);
+        
+        // Create component documents if provided
+        if (component.documents && component.documents.length > 0) {
+          const componentDocuments = component.documents.map(doc => ({
+            name: doc.name,
+            url: doc.url,
+            uploadDate: doc.uploadDate ? new Date(doc.uploadDate) : new Date(),
+            componentId: componentResult.insertedId,
+            orderId: result.insertedId
+          }));
+          await db.collection('Document').insertMany(componentDocuments);
+        }
+      }
+    }
+    
     await client.close();
     
     const responseOrder = {
@@ -582,6 +1017,190 @@ app.delete('/api/orders/:id', async (req, res) => {
   } catch (err) {
     console.error('DELETE /api/orders/:id error:', err);
     res.status(500).json({ error: 'Fehler beim Löschen des Auftrags', details: err.message });
+  }
+});
+
+// === COMPONENTS API ===
+// GET /api/orders/:orderId/components - Get all components for an order
+app.get('/api/orders/:orderId/components', async (req, res) => {
+  try {
+    const { client, db } = await getDB();
+    
+    const components = await db.collection('Component').find({ 
+      orderId: new ObjectId(req.params.orderId) 
+    }).toArray();
+    
+    // Enrich components with their documents
+    const enrichedComponents = await Promise.all(components.map(async (component) => {
+      const compDocuments = await db.collection('Document').find({ 
+        componentId: new ObjectId(component._id) 
+      }).toArray();
+      
+      const { _id, ...componentWithoutId } = component;
+      return {
+        ...componentWithoutId,
+        id: _id.toString(),
+        documents: compDocuments
+      };
+    }));
+    
+    await client.close();
+    
+    console.log('GET /api/orders/:orderId/components - Loaded', enrichedComponents.length, 'components');
+    res.json(enrichedComponents);
+  } catch (err) {
+    console.error('GET /api/orders/:orderId/components error:', err);
+    res.status(500).json({ error: 'Fehler beim Laden der Komponenten', details: err.message });
+  }
+});
+
+// POST /api/orders/:orderId/components - Create new component
+app.post('/api/orders/:orderId/components', async (req, res) => {
+  try {
+    const { client, db } = await getDB();
+    const { title, name, description, material, quantity, notes, documents } = req.body;
+    
+    // Create new component
+    const newComponent = {
+      title: title || name,
+      description: description || '',
+      material: material || '',
+      quantity: quantity || 1,
+      notes: notes || '',
+      orderId: new ObjectId(req.params.orderId),
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    
+    const result = await db.collection('Component').insertOne(newComponent);
+    
+    // Create documents separately if provided
+    if (documents && documents.length > 0) {
+      const documentObjects = documents.map(doc => ({
+        name: doc.name,
+        url: doc.url,
+        uploadDate: doc.uploadDate ? new Date(doc.uploadDate) : new Date(),
+        componentId: result.insertedId,
+        orderId: new ObjectId(req.params.orderId)
+      }));
+      await db.collection('Document').insertMany(documentObjects);
+    }
+    
+    await client.close();
+    
+    const responseComponent = {
+      ...newComponent,
+      id: result.insertedId.toString(),
+      _id: undefined,
+      documents: documents || []
+    };
+    
+    console.log('POST /api/orders/:orderId/components - Created component:', responseComponent.name);
+    res.json(responseComponent);
+  } catch (err) {
+    console.error('POST /api/orders/:orderId/components error:', err);
+    res.status(500).json({ error: 'Fehler beim Anlegen der Komponente', details: err.message });
+  }
+});
+
+// PUT /api/components/:id - Update component
+app.put('/api/components/:id', async (req, res) => {
+  try {
+    const { client, db } = await getDB();
+    const { name, description, material, quantity, notes, documents } = req.body;
+    
+    // Build update data
+    const updateData = {
+      updatedAt: new Date()
+    };
+    
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (material !== undefined) updateData.material = material;
+    if (quantity !== undefined) updateData.quantity = quantity;
+    if (notes !== undefined) updateData.notes = notes;
+    
+    // Update component
+    const result = await db.collection('Component').updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: updateData }
+    );
+    
+    if (result.matchedCount === 0) {
+      await client.close();
+      return res.status(404).json({ error: 'Komponente nicht gefunden' });
+    }
+    
+    // Handle documents if provided
+    if (documents !== undefined) {
+      // Delete existing component documents
+      await db.collection('Document').deleteMany({ 
+        componentId: new ObjectId(req.params.id) 
+      });
+      
+      // Create new documents
+      if (documents.length > 0) {
+        const component = await db.collection('Component').findOne({ _id: new ObjectId(req.params.id) });
+        const documentObjects = documents.map(doc => ({
+          name: doc.name,
+          url: doc.url,
+          uploadDate: doc.uploadDate ? new Date(doc.uploadDate) : new Date(),
+          componentId: new ObjectId(req.params.id),
+          orderId: component.orderId
+        }));
+        await db.collection('Document').insertMany(documentObjects);
+      }
+    }
+    
+    // Get updated component with documents
+    const updatedComponent = await db.collection('Component').findOne({ _id: new ObjectId(req.params.id) });
+    const compDocuments = await db.collection('Document').find({ 
+      componentId: new ObjectId(req.params.id) 
+    }).toArray();
+    
+    await client.close();
+    
+    const responseComponent = {
+      ...updatedComponent,
+      id: updatedComponent._id.toString(),
+      _id: undefined,
+      documents: compDocuments
+    };
+    
+    console.log('PUT /api/components/:id - Updated component:', responseComponent.name);
+    res.json(responseComponent);
+  } catch (err) {
+    console.error('PUT /api/components/:id error:', err);
+    res.status(500).json({ error: 'Fehler beim Aktualisieren der Komponente', details: err.message });
+  }
+});
+
+// DELETE /api/components/:id - Delete component
+app.delete('/api/components/:id', async (req, res) => {
+  try {
+    const { client, db } = await getDB();
+    
+    // Delete component documents
+    await db.collection('Document').deleteMany({ 
+      componentId: new ObjectId(req.params.id) 
+    });
+    
+    // Delete component
+    const result = await db.collection('Component').deleteOne({ 
+      _id: new ObjectId(req.params.id) 
+    });
+    
+    await client.close();
+    
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Komponente nicht gefunden' });
+    }
+    
+    console.log('DELETE /api/components/:id - Deleted component:', req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE /api/components/:id error:', err);
+    res.status(500).json({ error: 'Fehler beim Löschen der Komponente', details: err.message });
   }
 });
 

@@ -16,6 +16,7 @@ type AppAction =
   | { type: 'LOGOUT' }
   | { type: 'ADD_ORDER'; payload: Order }
   | { type: 'UPDATE_ORDER'; payload: Order }
+  | { type: 'DELETE_ORDER'; payload: string }
   | { type: 'ADD_SUBTASK'; payload: { orderId: string; subTask: SubTask } }
   | { type: 'UPDATE_SUBTASK'; payload: { orderId: string; subTask: SubTask } }
   | { type: 'DELETE_SUBTASK'; payload: { orderId: string; subTaskId: string } }
@@ -70,6 +71,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
         orders: state.orders.map(order =>
           order.id === action.payload.id ? action.payload : order
         )
+      };
+    case 'DELETE_ORDER':
+      return {
+        ...state,
+        orders: state.orders.filter(order => order.id !== action.payload)
       };
     case 'ADD_SUBTASK':
       return {
