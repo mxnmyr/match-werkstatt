@@ -5,6 +5,7 @@ import ws from '../utils/websocket';
 import { useApp } from '../context/AppContext';
 import NetworkFileUpload from './NetworkFileUpload';
 import STLViewer from './STLViewer';
+import FilesMigrationStatus from './FilesMigrationStatus';
 
 interface OrderDetailsProps {
   order: Order;
@@ -442,6 +443,19 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                             type: 'error'
                           }
                         });
+                      }}
+                    />
+                  </div>
+                )}
+                
+                {/* Datei-Migration Status */}
+                {(state.currentUser?.role === 'admin' || state.currentUser?.role === 'workshop') && (
+                  <div className="mb-6">
+                    <FilesMigrationStatus 
+                      orderId={currentOrder.id}
+                      onStatusChange={(status) => {
+                        // Optional: Status-Updates verarbeiten
+                        console.log('Migration Status:', status);
                       }}
                     />
                   </div>

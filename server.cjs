@@ -7,6 +7,28 @@ const path = require('path');
 const fs = require('fs');
 const { MongoClient, ObjectId } = require('mongodb');
 
+// Hybrid LDAP Integration
+const SimpleLDAPAuth = require('./simple-ldap-auth.cjs');
+
+// LDAP Konfiguration
+const ldapConfig = {
+  host: process.env.LDAP_HOST || 'ldap.company.local',
+  port: parseInt(process.env.LDAP_PORT) || 389,
+  useTLS: process.env.LDAP_USE_TLS === 'true',
+  baseDN: process.env.LDAP_BASE_DN || 'dc=company,dc=local',
+  userSearchBase: process.env.LDAP_USER_SEARCH_BASE || 'ou=users,dc=company,dc=local',
+  bindDN: process.env.LDAP_BIND_DN || '',
+  bindPassword: process.env.LDAP_BIND_PASSWORD || ''
+};
+
+// LDAP Authenticator initialisieren
+const ldapAuth = new SimpleLDAPAuth(ldapConfig);
+console.log('[HYBRID-AUTH] LDAP-Konfiguration geladen:', {
+  host: ldapConfig.host,
+  port: ldapConfig.port,
+  baseDN: ldapConfig.baseDN
+});
+
 const app = express();
 const port = 3001;
 
@@ -22,6 +44,25 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Static files
 const uploadsDir = path.join(__dirname, 'storage', 'uploads');
 app.use('/uploads', express.static(uploadsDir));
+
+// Network folder static files middleware
+app.use('/network-files', async (req, res, next) => {
+  try {
+    const { client, db } = await getDB();
+    const settingsCollection = db.collection('settings');
+    const networkConfig = await settingsCollection.findOne({ type: 'network-config' });
+    await client.close();
+    
+    if (networkConfig && networkConfig.networkPath && fs.existsSync(networkConfig.networkPath)) {
+      express.static(networkConfig.networkPath)(req, res, next);
+    } else {
+      res.status(404).json({ error: 'Netzwerkpfad nicht verfügbar' });
+    }
+  } catch (err) {
+    console.error('Network files middleware error:', err);
+    res.status(500).json({ error: 'Fehler beim Zugriff auf Netzwerkdateien' });
+  }
+});
 
 // Multer setup for file uploads
 const storage = multer.diskStorage({
@@ -151,23 +192,223 @@ app.post('/api/users', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
+    console.log(`[HYBRID-AUTH] Login-Versuch für: ${username}`);
+    
+    let userInfo = null;
+    let authSource = 'local';
+
+    // 1. Versuche LDAP-Authentifizierung
+    try {
+      console.log('[HYBRID-AUTH] Versuche LDAP-Authentifizierung...');
+      userInfo = await ldapAuth.authenticate(username, password);
+      
+      if (userInfo) {
+        authSource = 'ldap';
+        console.log('[HYBRID-AUTH] LDAP-Authentifizierung erfolgreich');
+        
+        // Hole oder erstelle lokalen Benutzer-Eintrag für Rollen-Management
+        const { client, db } = await getDB();
+        
+        let localUser = await db.collection('User').findOne({ 
+          $or: [
+            { username: userInfo.username },
+            { email: userInfo.email }
+          ]
+        });
+
+        if (localUser) {
+          console.log('[HYBRID-AUTH] Lokaler Benutzer gefunden - aktualisiere LDAP-Daten');
+          // Aktualisiere LDAP-Daten, behalte lokale Rollen
+          await db.collection('User').updateOne(
+            { _id: localUser._id },
+            {
+              $set: {
+                email: userInfo.email,
+                name: userInfo.name,
+                lastLdapLogin: new Date(),
+                authSource: 'ldap'
+              }
+            }
+          );
+          localUser = await db.collection('User').findOne({ _id: localUser._id });
+        } else {
+          console.log('[HYBRID-AUTH] Neuer LDAP-Benutzer - erstelle lokalen Eintrag');
+          // Erstelle neuen lokalen Benutzer mit Standard-Rolle
+          const newUser = {
+            username: userInfo.username,
+            email: userInfo.email,
+            name: userInfo.name,
+            role: 'client', // Standard-Rolle für neue LDAP-Benutzer
+            isApproved: true, // LDAP-Benutzer automatisch bestätigt
+            authSource: 'ldap',
+            createdAt: new Date(),
+            lastLdapLogin: new Date()
+          };
+          
+          const result = await db.collection('User').insertOne(newUser);
+          localUser = await db.collection('User').findOne({ _id: result.insertedId });
+        }
+        
+        await client.close();
+        
+        // Erfolgreiche LDAP-Authentifizierung mit lokalen Rollen
+        return res.json({ 
+          success: true, 
+          user: convertMongoDoc(localUser),
+          authSource: 'ldap'
+        });
+      }
+    } catch (ldapError) {
+      console.error('[HYBRID-AUTH] LDAP-Authentifizierung fehlgeschlagen:', ldapError.message);
+    }
+
+    // 2. Fallback auf lokale Authentifizierung
+    console.log('[HYBRID-AUTH] Fallback auf lokale Authentifizierung...');
     const { client, db } = await getDB();
     
     const user = await db.collection('User').findOne({ username });
     await client.close();
     
     if (user && user.password === password) {
+      console.log('[HYBRID-AUTH] Lokale Authentifizierung erfolgreich');
+      
       if (user.role === 'client' && user.isApproved === false) {
         return res.status(403).json({ success: false, message: 'Account noch nicht bestätigt' });
       }
       
-      res.json({ success: true, user: convertMongoDoc(user) });
-    } else {
-      res.status(401).json({ success: false, message: 'Ungültige Zugangsdaten' });
+      return res.json({ 
+        success: true, 
+        user: convertMongoDoc(user),
+        authSource: 'local'
+      });
     }
+
+    // 3. Beide Authentifizierungen fehlgeschlagen
+    console.log('[HYBRID-AUTH] Alle Authentifizierungen fehlgeschlagen');
+    res.status(401).json({ success: false, message: 'Ungültige Zugangsdaten' });
+    
   } catch (err) {
     console.error('POST /api/login error:', err);
     res.status(500).json({ success: false, message: 'Serverfehler beim Login', error: err.message });
+  }
+});
+
+// LDAP Test-Endpunkt
+app.get('/api/ldap/test', async (req, res) => {
+  try {
+    console.log('[LDAP-TEST] Testing LDAP connection...');
+    const isConnected = await ldapAuth.testConnection();
+    
+    res.json({
+      success: true,
+      ldapConnected: isConnected,
+      config: {
+        host: ldapConfig.host,
+        port: ldapConfig.port,
+        baseDN: ldapConfig.baseDN,
+        userSearchBase: ldapConfig.userSearchBase
+      },
+      message: isConnected ? 'LDAP-Verbindung erfolgreich' : 'LDAP-Verbindung fehlgeschlagen'
+    });
+  } catch (err) {
+    console.error('[LDAP-TEST] Error:', err);
+    res.status(500).json({
+      success: false,
+      ldapConnected: false,
+      error: err.message
+    });
+  }
+});
+
+// LDAP Benutzer-Rolle aktualisieren
+app.put('/api/users/:id/role', async (req, res) => {
+  try {
+    const { role } = req.body;
+    const { client, db } = await getDB();
+    
+    console.log(`[HYBRID-AUTH] Aktualisiere Rolle für Benutzer ${req.params.id} zu: ${role}`);
+    
+    const result = await db.collection('User').updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { 
+        $set: { 
+          role: role,
+          roleUpdatedAt: new Date()
+        } 
+      }
+    );
+    
+    if (result.matchedCount === 0) {
+      await client.close();
+      return res.status(404).json({ error: 'Benutzer nicht gefunden' });
+    }
+    
+    const updatedUser = await db.collection('User').findOne({ _id: new ObjectId(req.params.id) });
+    await client.close();
+    
+    res.json({ 
+      success: true, 
+      user: convertMongoDoc(updatedUser),
+      message: `Rolle erfolgreich zu '${role}' geändert`
+    });
+  } catch (err) {
+    console.error('PUT /api/users/:id/role error:', err);
+    res.status(500).json({ error: 'Fehler beim Aktualisieren der Rolle', details: err.message });
+  }
+});
+
+// LDAP Benutzer-Synchronisation (für Admins)
+app.post('/api/ldap/sync-user', async (req, res) => {
+  try {
+    const { username } = req.body;
+    
+    if (!username) {
+      return res.status(400).json({ success: false, message: 'Username erforderlich' });
+    }
+
+    console.log(`[LDAP-SYNC] Synchronisiere Benutzer: ${username}`);
+    
+    // Versuche LDAP-Lookup (ohne Passwort-Validierung)
+    const { client, db } = await getDB();
+    
+    let existingUser = await db.collection('User').findOne({ username });
+    
+    if (existingUser) {
+      // Markiere als LDAP-Benutzer
+      await db.collection('User').updateOne(
+        { _id: existingUser._id },
+        {
+          $set: {
+            authSource: 'ldap',
+            lastLdapSync: new Date()
+          }
+        }
+      );
+      
+      const updatedUser = await db.collection('User').findOne({ _id: existingUser._id });
+      await client.close();
+      
+      res.json({ 
+        success: true, 
+        action: 'updated',
+        user: convertMongoDoc(updatedUser),
+        message: 'Benutzer als LDAP-Benutzer markiert'
+      });
+    } else {
+      res.status(404).json({ 
+        success: false, 
+        message: 'Benutzer nicht in lokaler Datenbank gefunden. Benutzer muss sich einmal anmelden.'
+      });
+    }
+    
+    await client.close();
+  } catch (err) {
+    console.error('[LDAP-SYNC] Error:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Fehler bei der LDAP-Synchronisation', 
+      error: err.message 
+    });
   }
 });
 
@@ -1394,8 +1635,26 @@ app.post('/api/orders/:id/migrate-files', async (req, res) => {
         const fileName = document.name || path.basename(document.url);
         const destinationPath = path.join(orderFolderPath, fileName);
         
-        // Copy file
+        // Copy file to network folder
         fs.copyFileSync(originalPath, destinationPath);
+        
+        // Create network-accessible URL
+        const orderFolderName = order.orderNumber || order._id.toString();
+        const networkUrl = `/network-files/${orderFolderName}/${fileName}`;
+        
+        // Update document in database
+        await ordersDb.collection('Document').updateOne(
+          { _id: document._id },
+          { 
+            $set: { 
+              url: networkUrl,
+              networkPath: destinationPath,
+              originalUrl: document.url, // Keep reference to original location
+              migrated: true,
+              migratedAt: new Date()
+            }
+          }
+        );
         
         // Track statistics
         migratedFiles++;
@@ -1419,10 +1678,99 @@ app.post('/api/orders/:id/migrate-files', async (req, res) => {
         folderPath: orderFolderPath
       }
     });
-    
+
   } catch (err) {
     console.error('POST /api/orders/:id/migrate-files error:', err);
     res.status(500).json({ success: false, error: 'Fehler beim Migrieren der Dateien' });
+  }
+});
+
+// GET /api/orders/:id/migration-status - Check migration status of order files
+app.get('/api/orders/:id/migration-status', async (req, res) => {
+  try {
+    const client = new MongoClient(MONGODB_URL);
+    await client.connect();
+    
+    const ordersDb = client.db('matchdb');
+    const documents = await ordersDb.collection('Document').find({ 
+      orderId: new ObjectId(req.params.id) 
+    }).toArray();
+    
+    await client.close();
+    
+    const migrationStatus = {
+      totalFiles: documents.length,
+      migratedFiles: documents.filter(doc => doc.migrated).length,
+      pendingFiles: documents.filter(doc => !doc.migrated).length,
+      files: documents.map(doc => ({
+        id: doc._id.toString(),
+        name: doc.name,
+        migrated: !!doc.migrated,
+        migratedAt: doc.migratedAt,
+        currentUrl: doc.url,
+        originalUrl: doc.originalUrl || doc.url
+      }))
+    };
+    
+    res.json(migrationStatus);
+  } catch (err) {
+    console.error('GET /api/orders/:id/migration-status error:', err);
+    res.status(500).json({ error: 'Fehler beim Abrufen des Migrationsstatus' });
+  }
+});
+
+// POST /api/orders/:id/rollback-migration - Rollback file migration
+app.post('/api/orders/:id/rollback-migration', async (req, res) => {
+  try {
+    const client = new MongoClient(MONGODB_URL);
+    await client.connect();
+    
+    const ordersDb = client.db('matchdb');
+    const documents = await ordersDb.collection('Document').find({ 
+      orderId: new ObjectId(req.params.id),
+      migrated: true
+    }).toArray();
+    
+    let rolledBackFiles = 0;
+    const errors = [];
+    
+    for (const document of documents) {
+      try {
+        // Restore original URL
+        await ordersDb.collection('Document').updateOne(
+          { _id: document._id },
+          { 
+            $set: { 
+              url: document.originalUrl || document.url
+            },
+            $unset: {
+              networkPath: '',
+              originalUrl: '',
+              migrated: '',
+              migratedAt: ''
+            }
+          }
+        );
+        
+        rolledBackFiles++;
+      } catch (rollbackError) {
+        errors.push(`Fehler beim Zurücksetzen von ${document.name}: ${rollbackError.message}`);
+      }
+    }
+    
+    await client.close();
+    
+    res.json({
+      success: true,
+      message: `${rolledBackFiles} Datei(en) erfolgreich zurückgesetzt`,
+      rollbackResult: {
+        rolledBackFiles,
+        errors: errors.length > 0 ? errors : undefined
+      }
+    });
+  } catch (err) {
+    console.error('POST /api/orders/:id/rollback-migration error:', err);
+    res.status(500).json({ error: 'Fehler beim Zurücksetzen der Migration' });
   }
 });
 
@@ -1445,7 +1793,15 @@ app.get('/api/documents/:id', async (req, res) => {
       return res.status(404).json({ error: 'Dokument nicht gefunden' });
     }
     
-    const filePath = path.join(uploadsDir, path.basename(document.url));
+    let filePath;
+    
+    // Check if document has been migrated to network folder
+    if (document.migrated && document.networkPath && fs.existsSync(document.networkPath)) {
+      filePath = document.networkPath;
+    } else {
+      // Fall back to uploads folder
+      filePath = path.join(uploadsDir, path.basename(document.url));
+    }
     
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: 'Datei nicht gefunden' });

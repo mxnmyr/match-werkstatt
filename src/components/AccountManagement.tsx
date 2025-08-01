@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Edit2, Trash2, User, Building2, Shield } from 'lucide-react';
+import { X, Plus, Edit2, Trash2, User, Building2, Shield, Server } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { WorkshopAccount } from '../types';
 import NetworkConfigAdmin from './NetworkConfigAdmin';
+import LDAPManagement from './LDAPManagement';
 
 interface AccountManagementProps {
   onClose: () => void;
@@ -255,6 +256,14 @@ export default function AccountManagement({ onClose }: AccountManagementProps) {
           <div className="p-6 border-b">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Systemkonfiguration</h3>
             <NetworkConfigAdmin />
+            
+            <div className="mt-6 pt-6 border-t">
+              <h4 className="text-md font-semibold text-gray-900 mb-4 flex items-center">
+                <Server className="w-4 h-4 mr-2" />
+                LDAP-Verwaltung
+              </h4>
+              <LDAPManagement />
+            </div>
           </div>
         )}
 
