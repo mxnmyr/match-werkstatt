@@ -43,7 +43,24 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Static files
 const uploadsDir = path.join(__dirname, 'storage', 'uploads');
-app.use('/uploads', express.static(uploadsDir));
+app.use('/uploads', express.static(uploadsDir, {
+  etag: false,
+  lastModified: false,
+  setHeaders: (res, filePath) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.set('Surrogate-Control', 'no-store');
+    
+    // Add file modification time for debugging
+    try {
+      const stats = fs.statSync(filePath);
+      console.log(`[Static Upload] Serving: ${filePath} (mtime: ${stats.mtime.toISOString()})`);
+    } catch (e) {
+      console.log(`[Static Upload] Serving: ${filePath} (no stats available)`);
+    }
+  }
+}));
 
 // Network folder static files middleware
 app.use('/network-files', async (req, res, next) => {
@@ -52,9 +69,31 @@ app.use('/network-files', async (req, res, next) => {
     const settingsCollection = db.collection('settings');
     const networkConfig = await settingsCollection.findOne({ type: 'network-config' });
     await client.close();
+
+    // Strong cache prevention
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.set('Surrogate-Control', 'no-store');
     
     if (networkConfig && networkConfig.networkPath && fs.existsSync(networkConfig.networkPath)) {
-      express.static(networkConfig.networkPath)(req, res, next);
+      express.static(networkConfig.networkPath, {
+        etag: false,
+        lastModified: false,
+        setHeaders: (res, filePath) => {
+          res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+          res.set('Pragma', 'no-cache');
+          res.set('Expires', '0');
+          res.set('Surrogate-Control', 'no-store');
+          
+          try {
+            const stats = fs.statSync(filePath);
+            console.log(`[Static Network] Serving: ${filePath} (mtime: ${stats.mtime.toISOString()})`);
+          } catch (e) {
+            console.log(`[Static Network] Serving: ${filePath} (no stats available)`);
+          }
+        }
+      })(req, res, next);
     } else {
       res.status(404).json({ error: 'Netzwerkpfad nicht verfügbar' });
     }
@@ -73,8 +112,23 @@ const storage = multer.diskStorage({
     cb(null, uploadsDir);
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
+    // Keep original filename (sanitized), avoid collisions by appending (1), (2), ...
+    const ext = path.extname(file.originalname);
+    const baseRaw = path.basename(file.originalname, ext);
+    // Sanitize for Windows and general file systems
+    const safeBase = baseRaw
+      .trim()
+      .replace(/[\\/:*?"<>|]/g, '_') // Windows forbidden chars
+      .replace(/\s+/g, ' ')            // normalize spaces
+      .replace(/[^a-zA-Z0-9\-_. ()]/g, '_'); // keep common safe chars
+
+    let candidate = `${safeBase}${ext}`;
+    let counter = 1;
+    while (fs.existsSync(path.join(uploadsDir, candidate))) {
+      candidate = `${safeBase} (${counter})${ext}`;
+      counter += 1;
+    }
+    cb(null, candidate);
   }
 });
 
@@ -1774,40 +1828,252 @@ app.post('/api/orders/:id/rollback-migration', async (req, res) => {
   }
 });
 
-// GET /api/documents/:id - Download document
-app.get('/api/documents/:id', async (req, res) => {
+// GET /api/orders/:id/files/:filename - Direct file access by original filename
+app.get('/api/orders/:id/files/:filename', async (req, res) => {
+  console.log(`[Download] Request for order: ${req.params.id}, file: ${req.params.filename}`);
   try {
     const { client, db } = await getDB();
+    // Try to find order by orderNumber first, then by ObjectId if that fails
+    let order = await db.collection('Order').findOne({ orderNumber: req.params.id });
+    if (!order && ObjectId.isValid(req.params.id)) {
+      order = await db.collection('Order').findOne({ _id: new ObjectId(req.params.id) });
+    }
+    if (!order) {
+      console.log(`[Download] Order not found: ${req.params.id}`);
+      await client.close();
+      return res.status(404).json({ error: 'Auftrag nicht gefunden' });
+    }
+    console.log(`[Download] Found order: ${order.orderNumber} (${order._id})`);
+    const settingsCollection = db.collection('settings');
+    let networkConfig = await settingsCollection.findOne({ type: 'network-config' });
+    console.log(`[Download] Network config:`, networkConfig);
     
-    // Find document
-    let document = await db.collection('Document').findOne({ _id: new ObjectId(req.params.id) });
-    
-    if (!document) {
-      // Try component document
-      document = await db.collection('ComponentDocument').findOne({ _id: new ObjectId(req.params.id) });
+    // Fallback: If no network config found, use the known path
+    if (!networkConfig) {
+      console.log(`[Download] No network config found, using fallback path`);
+      networkConfig = { networkPath: 'C:\\Users\\maxim\\OneDrive\\Desktop\\Aufträge' };
     }
     
     await client.close();
-    
-    if (!document) {
-      return res.status(404).json({ error: 'Dokument nicht gefunden' });
-    }
-    
-    let filePath;
-    
-    // Check if document has been migrated to network folder
-    if (document.migrated && document.networkPath && fs.existsSync(document.networkPath)) {
-      filePath = document.networkPath;
+
+    const filename = decodeURIComponent(req.params.filename);
+    console.log(`[Download] Looking for file: ${filename}`);
+
+    // Resolve potential paths
+    let networkPath = undefined;
+    if (networkConfig && networkConfig.networkPath) {
+      console.log(`[Download] Network path from config: ${networkConfig.networkPath}`);
+      if (fs.existsSync(networkConfig.networkPath)) {
+        console.log(`[Download] Network path exists`);
+        const orderFolderName = order.orderNumber || order._id.toString();
+        const p = path.join(networkConfig.networkPath, orderFolderName, filename);
+        console.log(`[Download] Checking network path: ${p}`);
+        if (fs.existsSync(p)) {
+          networkPath = p;
+          console.log(`[Download] Network file found: ${networkPath}`);
+        } else {
+          console.log(`[Download] Network file not found`);
+        }
+      } else {
+        console.log(`[Download] Network path doesn't exist: ${networkConfig.networkPath}`);
+      }
     } else {
-      // Fall back to uploads folder
-      filePath = path.join(uploadsDir, path.basename(document.url));
+      console.log(`[Download] No network config or networkPath`);
     }
+
+    let uploadsPath = undefined;
+    try {
+      const { client: docClient, db: docDb } = await getDB();
+      // Use the order._id we already found, not the request parameter
+      console.log(`[Download] Checking uploads for orderId: ${order._id}, filename: ${filename}`);
+      const doc = await docDb.collection('Document').findOne({ orderId: order._id, name: filename });
+      await docClient.close();
+      if (doc && doc.url) {
+        const p = path.join(uploadsDir, path.basename(doc.url));
+        console.log(`[Download] Checking uploads path: ${p}`);
+        if (fs.existsSync(p)) {
+          uploadsPath = p;
+          console.log(`[Download] Uploads file found: ${uploadsPath}`);
+        } else {
+          console.log(`[Download] Uploads file not found`);
+        }
+      } else {
+        console.log(`[Download] No document record found in database`);
+      }
+    } catch (err) {
+      console.log(`[Download] Error checking uploads: ${err.message}`);
+    }
+
+    // Choose file with network priority (network always wins if available)
+    let chosenPath = undefined;
+    let debugInfo = {};
     
-    if (!fs.existsSync(filePath)) {
+    if (networkPath && uploadsPath) {
+      const netStat = fs.statSync(networkPath);
+      const upStat = fs.statSync(uploadsPath);
+      // ALWAYS prefer network over uploads
+      chosenPath = networkPath;
+      debugInfo = {
+        networkPath,
+        uploadsPath,
+        networkMtime: netStat.mtime.toISOString(),
+        uploadsMtime: upStat.mtime.toISOString(),
+        chosen: 'network (priority)',
+        reason: 'Network always has priority over uploads'
+      };
+      console.log(`[Download network priority] ${JSON.stringify(debugInfo)}`);
+    } else if (networkPath) {
+      chosenPath = networkPath;
+      debugInfo = { networkPath, source: 'network-only' };
+      console.log(`[Download network-only] ${JSON.stringify(debugInfo)}`);
+    } else if (uploadsPath) {
+      chosenPath = uploadsPath;
+      debugInfo = { uploadsPath, source: 'uploads-only' };
+      console.log(`[Download uploads-only] ${JSON.stringify(debugInfo)}`);
+    }
+
+    if (!chosenPath) {
+      console.log(`[Download] No file found - networkPath: ${networkPath}, uploadsPath: ${uploadsPath}`);
       return res.status(404).json({ error: 'Datei nicht gefunden' });
     }
+
+    // Force file system cache refresh
+    fs.access(chosenPath, fs.constants.F_OK, (err) => {
+      if (err) {
+        console.error(`[Download] File access error: ${err.message}`);
+        return res.status(404).json({ error: 'Datei nicht verfügbar' });
+      }
+      
+      // Strong cache prevention with additional headers
+      res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+      res.set('Surrogate-Control', 'no-store');
+      res.set('X-Accel-Expires', '0');
+      res.set('Vary', '*');
+      
+      // Add timestamp to ensure freshness
+      const stats = fs.statSync(chosenPath);
+      res.set('Last-Modified', stats.mtime.toUTCString());
+      res.set('ETag', `"${stats.mtime.getTime()}-${stats.size}"`);
+      res.set('X-File-Path', chosenPath);
+      res.set('X-File-Mtime', stats.mtime.toISOString());
+      
+      console.log(`[Download] Serving: ${chosenPath} (size: ${stats.size}, mtime: ${stats.mtime.toISOString()})`);
+      res.download(chosenPath, filename);
+    });
+  } catch (err) {
+    console.error('GET /api/orders/:id/files/:filename error:', err);
+    res.status(500).json({ error: 'Fehler beim Herunterladen der Datei', details: err.message });
+  }
+});
+
+app.get('/api/documents/:id', async (req, res) => {
+  try {
+    const { client, db } = await getDB();
+    let document = null;
     
-    res.download(filePath, document.name);
+    // Try to find document by various possible ID formats
+    if (ObjectId.isValid(req.params.id)) {
+      document = await db.collection('Document').findOne({ _id: new ObjectId(req.params.id) });
+      if (!document) {
+        document = await db.collection('ComponentDocument').findOne({ _id: new ObjectId(req.params.id) });
+      }
+    }
+    
+    // If not found by ObjectId, try other fields (adapt as needed for your schema)
+    if (!document) {
+      document = await db.collection('Document').findOne({ documentId: req.params.id });
+      if (!document) {
+        document = await db.collection('ComponentDocument').findOne({ documentId: req.params.id });
+      }
+    }
+    
+    if (!document) {
+      await client.close();
+      return res.status(404).json({ error: 'Dokument nicht gefunden' });
+    }
+    const settingsCollection = db.collection('settings');
+    const networkConfig = await settingsCollection.findOne({ type: 'network-config' });
+
+    // Find related order (for network folder resolution)
+    const order = await db.collection('Order').findOne({
+      $or: [
+        { 'documents._id': new ObjectId(req.params.id) },
+        { 'documents.id': req.params.id },
+        { _id: document.orderId }
+      ]
+    });
+
+    await client.close();
+
+    // Resolve potential paths
+    let networkPath = undefined;
+    if (document.migrated && document.networkPath && fs.existsSync(document.networkPath)) {
+      networkPath = document.networkPath;
+    } else if (networkConfig && networkConfig.networkPath && order) {
+      const orderFolderName = order.orderNumber || order._id.toString();
+      const p = path.join(networkConfig.networkPath, orderFolderName, document.name);
+      if (fs.existsSync(p)) networkPath = p;
+    }
+
+    let uploadsPath = undefined;
+    const pUp = path.join(uploadsDir, path.basename(document.url || ''));
+    if (fs.existsSync(pUp)) uploadsPath = pUp;
+
+    // Choose the newest available file (prefer newer uploads if network is older)
+    let chosenPath = undefined;
+    let debugInfo = {};
+    
+    if (networkPath && uploadsPath) {
+      const netStat = fs.statSync(networkPath);
+      const upStat = fs.statSync(uploadsPath);
+      chosenPath = upStat.mtime > netStat.mtime ? uploadsPath : networkPath;
+      debugInfo = {
+        networkPath,
+        uploadsPath,
+        networkMtime: netStat.mtime.toISOString(),
+        uploadsMtime: upStat.mtime.toISOString(),
+        chosen: chosenPath === networkPath ? 'network' : 'uploads'
+      };
+      console.log(`[Download by id choose newest] ${JSON.stringify(debugInfo)}`);
+    } else if (networkPath) {
+      chosenPath = networkPath;
+      debugInfo = { networkPath, source: 'network-only' };
+      console.log(`[Download by id network-only] ${JSON.stringify(debugInfo)}`);
+    } else if (uploadsPath) {
+      chosenPath = uploadsPath;
+      debugInfo = { uploadsPath, source: 'uploads-only' };
+      console.log(`[Download by id uploads-only] ${JSON.stringify(debugInfo)}`);
+    }
+
+    if (!chosenPath) return res.status(404).json({ error: 'Datei nicht gefunden' });
+
+    // Force file system cache refresh
+    fs.access(chosenPath, fs.constants.F_OK, (err) => {
+      if (err) {
+        console.error(`[Download by ID] File access error: ${err.message}`);
+        return res.status(404).json({ error: 'Datei nicht verfügbar' });
+      }
+      
+      // Strong cache prevention with additional headers
+      res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.set('Pragma', 'no-cache');
+      res.set('Expires', '0');
+      res.set('Surrogate-Control', 'no-store');
+      res.set('X-Accel-Expires', '0');
+      res.set('Vary', '*');
+      
+      // Add timestamp to ensure freshness
+      const stats = fs.statSync(chosenPath);
+      res.set('Last-Modified', stats.mtime.toUTCString());
+      res.set('ETag', `"${stats.mtime.getTime()}-${stats.size}"`);
+      res.set('X-File-Path', chosenPath);
+      res.set('X-File-Mtime', stats.mtime.toISOString());
+      
+      console.log(`[Download by ID] Serving: ${chosenPath} (size: ${stats.size}, mtime: ${stats.mtime.toISOString()})`);
+      res.download(chosenPath, document.name);
+    });
   } catch (err) {
     console.error('GET /api/documents/:id error:', err);
     res.status(500).json({ error: 'Fehler beim Herunterladen der Datei', details: err.message });
@@ -1912,7 +2178,7 @@ app.get('/api/system/network-test', async (req, res) => {
         `Netzwerkpfad "${networkConfig.networkPath}" ist erreichbar` : 
         `Netzwerkpfad "${networkConfig.networkPath}" ist nicht erreichbar`
     });
-  } catch (err) {
+  } catch ( err) {
     console.error('GET /api/system/network-test error:', err);
     res.status(500).json({ success: false, error: 'Fehler beim Testen der Netzwerkverbindung' });
   }

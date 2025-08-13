@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Download Debug Tool</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .log { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e9; color: #2e7d32; }
+        input, button { padding: 8px; margin: 5px; }
+        .headers { font-size: 12px; background: #e3f2fd; padding: 10px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>Download Debug Tool</h1>
+    
+    <div>
+        <input type="text" id="orderId" placeholder="Order ID" value="">
+        <input type="text" id="filename" placeholder="Filename" value="KPIV_3.Testat_Meyer.pdf">
+        <button onclick="testDownload()">Test Download</button>
+        <button onclick="clearLogs()">Clear Logs</button>
+    </div>
+    
+    <div id="logs"></div>
+
+    <script>
+        function log(message, type = 'info') {
+            const logs = document.getElementById('logs');
+            const div = document.createElement('div');
+            div.className = `log ${type}`;
+            div.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logs.appendChild(div);
+            logs.scrollTop = logs.scrollHeight;
+            console.log(message);
+        }
+        
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+        }
+        
+        async function testDownload() {
+            const orderId = document.getElementById('orderId').value;
+            const filename = document.getElementById('filename').value;
+            
+            if (!orderId || !filename) {
+                log('Bitte Order ID und Filename eingeben', 'error');
+                return;
+            }
+            
+            log(`Testing download for Order: ${orderId}, File: ${filename}`);
+            
+            const cacheBuster = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${performance.now()}`;
+            const url = `http://localhost:3001/api/orders/${orderId}/files/${encodeURIComponent(filename)}?cb=${cacheBuster}&_nocache=1`;
+            
+            log(`URL: ${url}`);
+            
+            try {
+                // Test basic connectivity first
+                log('Testing basic server connectivity...');
+                try {
+                    const pingResponse = await fetch('http://localhost:3001/api/orders', {
+                        method: 'HEAD',
+                        cache: 'no-store'
+                    });
+                    log(`Server ping: ${pingResponse.status} ${pingResponse.statusText}`, 
+                        pingResponse.ok ? 'success' : 'error');
+                } catch (pingError) {
+                    log(`Server ping failed: ${pingError.message}`, 'error');
+                    log('Backend server might not be running on port 3001', 'error');
+                    return;
+                }
+                
+                // Test HEAD request
+                log('Sending HEAD request to download endpoint...');
+                const headResponse = await fetch(url, {
+                    method: 'HEAD',
+                    cache: 'no-store',
+                    headers: {
+                        'Cache-Control': 'no-cache, no-store, must-revalidate',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
+                    }
+                });
+                
+                log(`HEAD Response Status: ${headResponse.status} ${headResponse.statusText}`, 
+                    headResponse.ok ? 'success' : 'error');
+                
+                if (headResponse.ok) {
+                    // Show response headers
+                    const headers = {};
+                    headResponse.headers.forEach((value, key) => {
+                        headers[key] = value;
+                    });
+                    
+                    log(`Response Headers: <div class="headers">${JSON.stringify(headers, null, 2)}</div>`);
+                    
+                    // Important headers
+                    const filePath = headResponse.headers.get('X-File-Path');
+                    const fileMtime = headResponse.headers.get('X-File-Mtime');
+                    const lastModified = headResponse.headers.get('Last-Modified');
+                    
+                    if (filePath) log(`File Path: ${filePath}`, 'success');
+                    if (fileMtime) log(`File Modified: ${fileMtime}`, 'success');
+                    if (lastModified) log(`Last-Modified: ${lastModified}`, 'success');
+                    
+                    // Try actual download
+                    log('Attempting download...');
+                    const newWindow = window.open(url, '_blank');
+                    if (newWindow) {
+                        log('Download window opened successfully', 'success');
+                        setTimeout(() => {
+                            try {
+                                newWindow.close();
+                                log('Download window closed');
+                            } catch (e) {
+                                log('Could not close download window (this is normal)');
+                            }
+                        }, 2000);
+                    } else {
+                        log('Popup blocked, using location.href');
+                        window.location.href = url;
+                    }
+                } else {
+                    // Get response body for error details
+                    try {
+                        const errorText = await headResponse.text();
+                        log(`Error response body: ${errorText}`, 'error');
+                    } catch (e) {
+                        log(`HEAD request failed: ${headResponse.status} ${headResponse.statusText}`, 'error');
+                    }
+                }
+                
+            } catch (error) {
+                log(`Fetch Error: ${error.name}: ${error.message}`, 'error');
+                log(`Error details: ${JSON.stringify({
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack?.substring(0, 500)
+                }, null, 2)}`, 'error');
+                
+                // Suggest solutions
+                if (error.message.includes('Failed to fetch')) {
+                    log('Mögliche Ursachen:', 'error');
+                    log('1. Backend-Server läuft nicht auf Port 3001', 'error');
+                    log('2. CORS-Problem zwischen Frontend und Backend', 'error');
+                    log('3. Netzwerk-/Firewall-Problem', 'error');
+                }
+            }
+        }
+        
+        // Auto-fill order ID if available
+        window.addEventListener('load', () => {
+            // Try to get order ID from main app if available
+            try {
+                if (window.opener && window.opener.document) {
+                    const url = window.opener.location.href;
+                    const match = url.match(/orders\/([^\/]+)/);
+                    if (match) {
+                        document.getElementById('orderId').value = match[1];
+                        log(`Auto-filled Order ID: ${match[1]}`);
+                    }
+                }
+            } catch (e) {
+                // Ignore cross-origin errors
+            }
+        });
+    </script>
+</body>
+</html>

@@ -90,15 +90,57 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
     }
   };
 
-  const handleDownload = (doc: any) => {
-    if (doc.url) {
-      const a = document.createElement('a');
-      a.href = doc.url.startsWith('/uploads/') ? `http://localhost:3001${doc.url}` : doc.url;
-      a.download = doc.name;
-      a.target = '_blank';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+  const handleDownload = async (doc: any) => {
+    try {
+      // Priority 1: Try direct file access by original filename (checks network folder first)
+      if (currentOrder.id && doc.name) {
+        const directUrl = `http://localhost:3001/api/orders/${currentOrder.id}/files/${encodeURIComponent(doc.name)}`;
+        try {
+          const response = await fetch(directUrl, { method: 'HEAD' });
+          if (response.ok) {
+            const a = document.createElement('a');
+            a.href = directUrl;
+            a.download = doc.name;
+            a.target = '_blank';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            return;
+          }
+        } catch {}
+      }
+
+      // Priority 2: Try document ID method if present
+      if (doc.id) {
+        const idUrl = `http://localhost:3001/api/documents/${doc.id}`;
+        try {
+          const response = await fetch(idUrl, { method: 'HEAD' });
+          if (response.ok) {
+            const a = document.createElement('a');
+            a.href = idUrl;
+            a.download = doc.name;
+            a.target = '_blank';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            return;
+          }
+        } catch {}
+      }
+
+      // Priority 3: Fallback to direct URL (legacy)
+      if (doc.url) {
+        const a = document.createElement('a');
+        a.href = doc.url.startsWith('/uploads/') ? `http://localhost:3001${doc.url}` : doc.url;
+        a.download = doc.name;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return;
+      }
+    } catch (error) {
+      console.error('Download error:', error);
     }
   };
 

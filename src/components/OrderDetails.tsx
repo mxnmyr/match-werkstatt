@@ -114,15 +114,108 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
     }
   };
 
-  const handleDownload = (doc: any) => {
-    if (doc.url) {
-      const a = document.createElement('a');
-      a.href = doc.url.startsWith('/uploads/') ? `http://localhost:3001${doc.url}` : doc.url;
-      a.download = doc.name;
-      a.target = '_blank';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+  const handleDownload = async (doc: any) => {
+    try {
+      // Generate a very strong cache-busting identifier
+      const cacheBuster = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${performance.now()}`;
+      
+      // Priority 1: Try direct file access by original filename (checks network folder first)
+      if (currentOrder.id && doc.name) {
+        const baseUrl = `http://localhost:3001/api/orders/${currentOrder.id}/files/${encodeURIComponent(doc.name)}`;
+        const directUrl = `${baseUrl}?cb=${cacheBuster}&_nocache=1`;
+        
+        try {
+          const headRes = await fetch(directUrl, { 
+            method: 'HEAD',
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0'
+            }
+          });
+          if (headRes.ok) {
+            console.log(`[Download] Using direct file access for: ${doc.name}`);
+            console.log(`[Download] File path: ${headRes.headers.get('X-File-Path')}`);
+            console.log(`[Download] File mtime: ${headRes.headers.get('X-File-Mtime')}`);
+            
+            // Use a new window to force fresh download
+            const newWindow = window.open(directUrl, '_blank');
+            if (newWindow) {
+              // Close the window after a short delay
+              setTimeout(() => newWindow.close(), 1000);
+            } else {
+              // Fallback to location.href if popup blocked
+              window.location.href = directUrl;
+            }
+            return;
+          }
+        } catch (directError) {
+          console.log('Direct file access failed, trying document ID method');
+        }
+      }
+      
+      // Priority 2: Try document ID method (existing fallback)
+      if (doc.id) {
+        const baseIdUrl = `http://localhost:3001/api/documents/${doc.id}`;
+        const idUrl = `${baseIdUrl}?cb=${cacheBuster}&_nocache=1`;
+        
+        try {
+          const headRes = await fetch(idUrl, { 
+            method: 'HEAD',
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0'
+            }
+          });
+          if (headRes.ok) {
+            console.log(`[Download] Using document ID access for: ${doc.name}`);
+            console.log(`[Download] File path: ${headRes.headers.get('X-File-Path')}`);
+            console.log(`[Download] File mtime: ${headRes.headers.get('X-File-Mtime')}`);
+            
+            // Use a new window to force fresh download
+            const newWindow = window.open(idUrl, '_blank');
+            if (newWindow) {
+              setTimeout(() => newWindow.close(), 1000);
+            } else {
+              window.location.href = idUrl;
+            }
+            return;
+          }
+        } catch (idError) {
+          console.log('Document ID access failed, trying URL method');
+        }
+      }
+      
+      // Priority 3: Fallback to direct URL (legacy method)
+      if (doc.url) {
+        const base = doc.url.startsWith('/uploads/') ? `http://localhost:3001${doc.url}` : doc.url;
+        const withTs = base.includes('?') ? `${base}&cb=${cacheBuster}` : `${base}?cb=${cacheBuster}`;
+        console.log(`[Download] Using legacy URL access for: ${doc.name}`);
+        window.location.href = withTs;
+        return;
+      }
+      
+      // If all methods fail
+      dispatch({
+        type: 'SHOW_NOTIFICATION',
+        payload: {
+          message: `Datei \"${doc.name}\" konnte nicht gefunden werden`,
+          type: 'error'
+        }
+      });
+      
+    } catch (error) {
+      console.error('Download error:', error);
+      dispatch({
+        type: 'SHOW_NOTIFICATION',
+        payload: {
+          message: `Fehler beim Herunterladen von \"${doc.name}\"`,
+          type: 'error'
+        }
+      });
     }
   };
 
@@ -412,7 +505,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                     <NetworkFileUpload
                       orderId={currentOrder.id}
                       uploadType="document"
-                      onUploadSuccess={(result) => {
+                      onUploadSuccess={(_result) => {
                         setShowUploadSection(false);
                         dispatch({
                           type: 'SHOW_NOTIFICATION',

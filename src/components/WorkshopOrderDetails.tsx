@@ -10,7 +10,6 @@ import {
   Trash2,
   Archive,
   Download,
-  Upload,
   Printer,
   Server,
   Eye
@@ -43,7 +42,6 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   const [subTaskAssignedTo, setSubTaskAssignedTo] = useState('');
   const [subTaskScopeType, setSubTaskScopeType] = useState<'order' | 'component'>('order');
   const [subTaskAssignedComponentId, setSubTaskAssignedComponentId] = useState('');
-  const [dragActive, setDragActive] = useState(false);
   const [showSTLViewers, setShowSTLViewers] = useState<{[key: string]: boolean}>({});
   const [showComponentUpload, setShowComponentUpload] = useState(false);
   const [activeComponentId, setActiveComponentId] = useState<string | null>(null);
@@ -292,45 +290,12 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     onClose();
   };
 
-  const handleFileUpload = (files: FileList | null) => {
-    if (!files) return;
-
-    Array.from(files).forEach(file => {
-      if (file.type === 'application/pdf') {
-        const document: PDFDocument = {
-          id: `doc_${Date.now()}_${Math.random()}`,
-          name: file.name,
-          url: URL.createObjectURL(file),
-          uploadDate: new Date(),
-          file: file
-        };
-        setSubTaskDocuments(prev => [...prev, document]);
-      }
-    });
-  };
-
-  const handleDrag = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true);
-    } else if (e.type === 'dragleave') {
-      setDragActive(false);
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    handleFileUpload(e.dataTransfer.files);
-  };
-
+  // Remove a temporary subtask document from local state
   const removeSubTaskDocument = (id: string) => {
     setSubTaskDocuments(prev => {
       const docToRemove = prev.find(doc => doc.id === id);
       if (docToRemove?.url) {
-        URL.revokeObjectURL(docToRemove.url);
+        try { URL.revokeObjectURL(docToRemove.url); } catch {}
       }
       return prev.filter(doc => doc.id !== id);
     });
@@ -400,26 +365,91 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     }
   };
 
-  const handleDownload = (doc: any) => {
-    // reworkComment docs might just have a filename as URL
-    if (doc.url && !doc.url.startsWith('blob:')) {
-        const a = document.createElement('a');
-        // Prepend server address if it's a relative path
-        a.href = doc.url.startsWith('/uploads/') ? `http://localhost:3001${doc.url}` : doc.url;
-        a.download = doc.name;
-        a.target = '_blank'; // Open in new tab to prevent navigation issues
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-    } else if (doc.file) { // For newly uploaded files before saving
-      const url = URL.createObjectURL(doc.file);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = doc.name;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+  const handleDownload = async (doc: any) => {
+    try {
+      // Generate a very strong cache-busting identifier
+      const cacheBuster = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${performance.now()}`;
+      
+      // Priority 1: Try direct file access by original filename (checks network folder first)
+      if (localOrder.id && doc.name) {
+        const baseUrl = `http://localhost:3001/api/orders/${localOrder.id}/files/${encodeURIComponent(doc.name)}`;
+        const directUrl = `${baseUrl}?cb=${cacheBuster}&_nocache=1`;
+        
+        try {
+          const response = await fetch(directUrl, { 
+            method: 'HEAD',
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0'
+            }
+          });
+          if (response.ok) {
+            console.log(`[Workshop Download] Using direct file access for: ${doc.name}`);
+            console.log(`[Workshop Download] File path: ${response.headers.get('X-File-Path')}`);
+            console.log(`[Workshop Download] File mtime: ${response.headers.get('X-File-Mtime')}`);
+            
+            // Use a new window to force fresh download
+            const newWindow = window.open(directUrl, '_blank');
+            if (newWindow) {
+              // Close the window after a short delay
+              setTimeout(() => newWindow.close(), 1000);
+            } else {
+              // Fallback to location.href if popup blocked
+              window.location.href = directUrl;
+            }
+            return;
+          }
+        } catch (directError) {
+          console.log('Direct file access failed, trying document ID method');
+        }
+      }
+
+      // Priority 2: Try document ID method if present
+      if (doc.id) {
+        const baseIdUrl = `http://localhost:3001/api/documents/${doc.id}`;
+        const idUrl = `${baseIdUrl}?cb=${cacheBuster}&_nocache=1`;
+        
+        try {
+          const response = await fetch(idUrl, { 
+            method: 'HEAD',
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0'
+            }
+          });
+          if (response.ok) {
+            console.log(`[Workshop Download] Using document ID access for: ${doc.name}`);
+            console.log(`[Workshop Download] File path: ${response.headers.get('X-File-Path')}`);
+            console.log(`[Workshop Download] File mtime: ${response.headers.get('X-File-Mtime')}`);
+            
+            // Use a new window to force fresh download
+            const newWindow = window.open(idUrl, '_blank');
+            if (newWindow) {
+              setTimeout(() => newWindow.close(), 1000);
+            } else {
+              window.location.href = idUrl;
+            }
+            return;
+          }
+        } catch (idError) {
+          console.log('Document ID access failed, trying URL method');
+        }
+      }
+
+      // Priority 3: Fallback to direct URL (legacy)
+      if (doc.url) {
+        const base = doc.url.startsWith('/uploads/') ? `http://localhost:3001${doc.url}` : doc.url;
+        const withTs = base.includes('?') ? `${base}&cb=${cacheBuster}` : `${base}?cb=${cacheBuster}`;
+        console.log(`[Workshop Download] Using legacy URL access for: ${doc.name}`);
+        window.location.href = withTs;
+        return;
+      }
+    } catch (error) {
+      console.error('Download error:', error);
     }
   };
 
@@ -591,7 +621,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                       src={titleImageUrl} 
                       alt="Titelbild" 
                       className="w-32 h-32 object-cover rounded-lg shadow-md"
-                      onError={(e) => {
+                      onError={() => {
                         console.error('Image failed to load:', titleImageUrl);
                         setTitleImageUrl(''); // Clear the URL on error
                       }}
@@ -1234,12 +1264,12 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                     uploadType="document"
                     onUploadSuccess={(result) => {
                       // Add document to local state
-                      const newDoc: PDFDocument = {
+                      const newDoc = {
                         id: result.documentId || `doc_${Date.now()}`,
                         name: result.originalname,
                         url: `/uploads/${result.filename}`,
                         uploadDate: new Date()
-                      };
+                      } as PDFDocument;
                       setSubTaskDocuments(prev => [...prev, newDoc]);
                       
                       dispatch({
@@ -1539,7 +1569,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
         <NetworkFileUpload
           orderId={localOrder.id}
           uploadType="cam"
-          onUploadSuccess={(result) => {
+          onUploadSuccess={() => {
             dispatch({
               type: 'SHOW_NOTIFICATION',
               payload: {
