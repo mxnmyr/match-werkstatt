@@ -18,7 +18,8 @@ import { useApp } from '../context/AppContext';
 import { Order, SubTask, PDFDocument, RevisionComment, NoteHistory } from '../types';
 import OrderPDFGenerator from '../utils/OrderPDFGenerator';
 import NetworkFolderStatus from './NetworkFolderStatus';
-import NetworkFileUpload from './NetworkFileUpload';
+import NetworkFilesViewer from './NetworkFilesViewer';
+import NetworkDragDropUpload from './NetworkDragDropUpload';
 import STLViewer from './STLViewer';
 
 interface WorkshopOrderDetailsProps {
@@ -697,6 +698,13 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                 />
               </div>
 
+              {/* Netzwerkdateien */}
+              <div className="mt-4">
+                <NetworkFilesViewer 
+                  orderId={localOrder.id}
+                />
+              </div>
+
               <div>
                 <h4 className="text-md font-semibold text-gray-900 mb-2">Beschreibung</h4>
                 <p className="text-gray-700 bg-gray-50 rounded-lg p-4">{localOrder.description}</p>
@@ -888,17 +896,17 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                           
                           {showComponentUpload && activeComponentId === componentId && (
                             <div className="mt-3">
-                              <NetworkFileUpload
+                              <NetworkDragDropUpload
                                 orderId={localOrder.id}
-                                componentId={componentId}
-                                uploadType="component"
-                                onUploadSuccess={() => {
+                                uploadType="document"
+                                targetFolder="Bauteile"
+                                onUploadSuccess={(fileName) => {
                                   setShowComponentUpload(false);
                                   setActiveComponentId(null);
                                   dispatch({
                                     type: 'SHOW_NOTIFICATION',
                                     payload: {
-                                      message: 'Bauteil-Dokument erfolgreich hochgeladen',
+                                      message: `Bauteil-Dokument "${fileName}" erfolgreich hochgeladen`,
                                       type: 'success'
                                     }
                                   });
@@ -919,6 +927,15 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                                     .catch(error => {
                                       console.error('Error reloading order:', error);
                                     });
+                                }}
+                                onUploadError={(error) => {
+                                  dispatch({
+                                    type: 'SHOW_NOTIFICATION',
+                                    payload: {
+                                      message: `Upload-Fehler: ${error}`,
+                                      type: 'error'
+                                    }
+                                  });
                                 }}
                               />
                             </div>
@@ -1259,32 +1276,35 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                   </label>
                   
                   {/* New Network File Upload Component */}
-                  <NetworkFileUpload
+                  <NetworkDragDropUpload
                     orderId={localOrder.id}
                     uploadType="document"
-                    onUploadSuccess={(result) => {
-                      // Add document to local state
-                      const newDoc = {
-                        id: result.documentId || `doc_${Date.now()}`,
-                        name: result.originalname,
-                        url: `/uploads/${result.filename}`,
-                        uploadDate: new Date()
-                      } as PDFDocument;
-                      setSubTaskDocuments(prev => [...prev, newDoc]);
-                      
+                    targetFolder="Dokumente"
+                    acceptedTypes={['.pdf']}
+                    onUploadSuccess={(fileName) => {
                       dispatch({
                         type: 'SHOW_NOTIFICATION',
                         payload: {
-                          message: 'Dokument erfolgreich hochgeladen',
+                          message: `Dokument "${fileName}" erfolgreich hochgeladen`,
                           type: 'success'
                         }
                       });
+                      
+                      // Reload order to get updated documents
+                      fetch(`http://localhost:3001/api/orders/${localOrder.id}`)
+                        .then(response => response.json())
+                        .then(data => {
+                          setLocalOrder(data);
+                        })
+                        .catch(error => {
+                          console.error('Error reloading order:', error);
+                        });
                     }}
                     onUploadError={(error) => {
                       dispatch({
                         type: 'SHOW_NOTIFICATION',
                         payload: {
-                          message: `Fehler beim Hochladen: ${error.message}`,
+                          message: `Fehler beim Hochladen: ${error}`,
                           type: 'error'
                         }
                       });
@@ -1559,35 +1579,36 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
               orderId={localOrder.id} 
               orderNumber={localOrder.orderNumber}
             />
+            <div className="mt-6">
+              <NetworkFilesViewer 
+                orderId={localOrder.id}
+              />
+            </div>
           </div>
         </div>
       )}
 
-      {/* CAM-Dateien Upload Bereich */}
+      {/* Dateiupload Bereich */}
       <div className="mt-6 border-t pt-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">CAM-Dateien</h3>
-        <NetworkFileUpload
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Dateiupload</h3>
+        <NetworkDragDropUpload
           orderId={localOrder.id}
           uploadType="cam"
-          onUploadSuccess={() => {
+          targetFolder="Dateien"
+          onUploadSuccess={(fileName) => {
             dispatch({
               type: 'SHOW_NOTIFICATION',
               payload: {
-                message: 'CAM-Datei erfolgreich hochgeladen',
+                message: `Datei "${fileName}" erfolgreich hochgeladen`,
                 type: 'success'
               }
             });
             
-            // Optional: Reload order oder hinzufügen zur lokalen Dokumentenliste
+            // Reload order to update documents
             fetch(`http://localhost:3001/api/orders/${localOrder.id}`)
               .then(response => response.json())
               .then(data => {
                 setLocalOrder(data);
-                // Wichtig: Dokumente auch zu changedFields hinzufügen damit sie gespeichert werden
-                setChangedFields(prev => ({
-                  ...prev,
-                  documents: data.documents
-                }));
               })
               .catch(error => {
                 console.error('Error reloading order:', error);
@@ -1597,7 +1618,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
             dispatch({
               type: 'SHOW_NOTIFICATION',
               payload: {
-                message: `Fehler beim Hochladen der CAM-Datei: ${error.message}`,
+                message: `Upload-Fehler: ${error}`,
                 type: 'error'
               }
             });

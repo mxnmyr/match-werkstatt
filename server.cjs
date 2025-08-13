@@ -2189,6 +2189,314 @@ app.get('/api/test', (req, res) => {
   res.json({ message: 'MongoDB Match Werkstatt API is running!', timestamp: new Date().toISOString() });
 });
 
+// GET /api/orders/:id/network-files - List all files in order's network folder
+app.get('/api/orders/:id/network-files', async (req, res) => {
+  try {
+    const client = new MongoClient(MONGODB_URL);
+    await client.connect();
+    
+    // Get order from matchdb
+    const ordersDb = client.db('matchdb');
+    const order = await ordersDb.collection('Order').findOne({ _id: new ObjectId(req.params.id) });
+    
+    if (!order) {
+      await client.close();
+      return res.status(404).json({ error: 'Auftrag nicht gefunden' });
+    }
+    
+    // Get network configuration
+    const settingsDb = client.db('match_werkstatt');
+    const networkConfig = await settingsDb.collection('settings').findOne({ type: 'network-config' });
+    
+    await client.close();
+    
+    if (!networkConfig || !networkConfig.networkPath) {
+      return res.json({
+        success: false,
+        message: 'Kein Netzwerkpfad konfiguriert',
+        files: []
+      });
+    }
+    
+    // Check if network path is accessible
+    if (!fs.existsSync(networkConfig.networkPath)) {
+      return res.json({
+        success: false,
+        message: 'Netzwerkpfad nicht erreichbar',
+        files: []
+      });
+    }
+    
+    // Build order folder path
+    const orderFolderName = order.orderNumber || order._id.toString();
+    const orderFolderPath = path.join(networkConfig.networkPath, orderFolderName);
+    
+    // Check if order folder exists
+    if (!fs.existsSync(orderFolderPath)) {
+      return res.json({
+        success: true,
+        message: 'Auftragordner existiert noch nicht',
+        files: [],
+        folderPath: orderFolderPath
+      });
+    }
+    
+    // Read all files in the order folder including subfolders
+    const files = [];
+    
+    function readFilesRecursively(folderPath, relativePath = '') {
+      const items = fs.readdirSync(folderPath);
+      
+      for (const item of items) {
+        const itemPath = path.join(folderPath, item);
+        const stat = fs.statSync(itemPath);
+        
+        if (stat.isFile()) {
+          const relativeFilePath = relativePath ? path.join(relativePath, item) : item;
+          files.push({
+            name: item,
+            relativePath: relativeFilePath,
+            size: stat.size,
+            lastModified: stat.mtime.toISOString(),
+            created: stat.birthtime.toISOString(),
+            extension: path.extname(item).toLowerCase(),
+            downloadUrl: `/api/orders/${req.params.id}/network-files/${encodeURIComponent(relativeFilePath)}/download`
+          });
+        } else if (stat.isDirectory()) {
+          // Recursively read subdirectories
+          const subRelativePath = relativePath ? path.join(relativePath, item) : item;
+          readFilesRecursively(itemPath, subRelativePath);
+        }
+      }
+    }
+    
+    readFilesRecursively(orderFolderPath);
+    
+    // Sort files by name
+    files.sort((a, b) => a.name.localeCompare(b.name));
+    
+    res.json({
+      success: true,
+      message: `${files.length} Datei(en) gefunden`,
+      files,
+      folderPath: orderFolderPath,
+      orderNumber: order.orderNumber
+    });
+    
+  } catch (err) {
+    console.error('GET /api/orders/:id/network-files error:', err);
+    res.status(500).json({ success: false, error: 'Fehler beim Auflisten der Netzwerkdateien' });
+  }
+});
+
+// GET /api/orders/:id/network-files/:filename/download - Download file from order's network folder
+app.get('/api/orders/:id/network-files/:filename/download', async (req, res) => {
+  try {
+    const client = new MongoClient(MONGODB_URL);
+    await client.connect();
+    
+    // Get order from matchdb
+    const ordersDb = client.db('matchdb');
+    const order = await ordersDb.collection('Order').findOne({ _id: new ObjectId(req.params.id) });
+    
+    if (!order) {
+      await client.close();
+      return res.status(404).json({ error: 'Auftrag nicht gefunden' });
+    }
+    
+    // Get network configuration
+    const settingsDb = client.db('match_werkstatt');
+    const networkConfig = await settingsDb.collection('settings').findOne({ type: 'network-config' });
+    
+    await client.close();
+    
+    if (!networkConfig || !networkConfig.networkPath) {
+      return res.status(400).json({ error: 'Kein Netzwerkpfad konfiguriert' });
+    }
+    
+    // Check if network path is accessible
+    if (!fs.existsSync(networkConfig.networkPath)) {
+      return res.status(400).json({ error: 'Netzwerkpfad nicht erreichbar' });
+    }
+    
+    // Build file path - filename can include subdirectories
+    const orderFolderName = order.orderNumber || order._id.toString();
+    const orderFolderPath = path.join(networkConfig.networkPath, orderFolderName);
+    const filename = decodeURIComponent(req.params.filename);
+    const filePath = path.join(orderFolderPath, filename);
+    
+    // Security check: ensure file is within order folder
+    const resolvedFilePath = path.resolve(filePath);
+    const resolvedOrderPath = path.resolve(orderFolderPath);
+    
+    if (!resolvedFilePath.startsWith(resolvedOrderPath)) {
+      return res.status(400).json({ error: 'Ungültiger Dateipfad' });
+    }
+    
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Datei nicht gefunden' });
+    }
+    
+    // Get file stats
+    const stat = fs.statSync(filePath);
+    
+    if (!stat.isFile()) {
+      return res.status(400).json({ error: 'Pfad ist keine Datei' });
+    }
+    
+    // Set headers for download
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', stat.size);
+    
+    // Stream the file
+    const readStream = fs.createReadStream(filePath);
+    readStream.pipe(res);
+    
+    readStream.on('error', (err) => {
+      console.error('File stream error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Fehler beim Lesen der Datei' });
+      }
+    });
+    
+  } catch (err) {
+    console.error('GET /api/orders/:id/network-files/:filename/download error:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Fehler beim Herunterladen der Datei' });
+    }
+  }
+});
+
+// Network upload configuration for direct CAM file uploads
+const camNetworkStorage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    try {
+      const client = new MongoClient(MONGODB_URL);
+      await client.connect();
+      
+      // Get order from matchdb
+      const ordersDb = client.db('matchdb');
+      const order = await ordersDb.collection('Order').findOne({ _id: new ObjectId(req.params.id) });
+      
+      if (!order) {
+        await client.close();
+        return cb(new Error('Auftrag nicht gefunden'));
+      }
+      
+      // Get network configuration
+      const settingsDb = client.db('match_werkstatt');
+      const networkConfig = await settingsDb.collection('settings').findOne({ type: 'network-config' });
+      
+      await client.close();
+      
+      if (!networkConfig || !networkConfig.networkPath) {
+        return cb(new Error('Netzwerkkonfiguration nicht gefunden'));
+      }
+      
+      if (!fs.existsSync(networkConfig.networkPath)) {
+        return cb(new Error('Netzwerkpfad nicht erreichbar'));
+      }
+      
+      // Build order folder path
+      const orderFolderName = order.orderNumber || order._id.toString();
+      const orderFolderPath = path.join(networkConfig.networkPath, orderFolderName);
+      
+      // Create order folder if it doesn't exist
+      if (!fs.existsSync(orderFolderPath)) {
+        fs.mkdirSync(orderFolderPath, { recursive: true });
+      }
+      
+      // Check for target subfolder (e.g., 'CAM-Dateien')
+      let targetPath = orderFolderPath;
+      if (req.body && req.body.targetFolder) {
+        targetPath = path.join(orderFolderPath, req.body.targetFolder);
+        
+        // Create subfolder if it doesn't exist
+        if (!fs.existsSync(targetPath)) {
+          fs.mkdirSync(targetPath, { recursive: true });
+        }
+      }
+      
+      // Store info for later use
+      req.networkOrderPath = orderFolderPath;
+      req.networkTargetPath = targetPath;
+      req.orderData = order;
+      req.uploadMode = 'network';
+      
+      cb(null, targetPath);
+      
+    } catch (error) {
+      console.error('CAM network storage error:', error);
+      cb(error);
+    }
+  },
+  filename: (req, file, cb) => {
+    // Keep original filename without timestamp prefix
+    const originalName = file.originalname;
+    cb(null, originalName);
+  }
+});
+
+const camNetworkUpload = multer({
+  storage: camNetworkStorage,
+  limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
+});
+
+// POST /api/orders/:id/upload-cam-file - Upload CAM file directly to network folder
+app.post('/api/orders/:id/upload-cam-file', camNetworkUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Keine Datei hochgeladen' });
+    }
+    
+    const client = new MongoClient(MONGODB_URL);
+    await client.connect();
+    const ordersDb = client.db('matchdb');
+    
+    // Create document record
+    const relativePath = req.body.targetFolder 
+      ? `${req.orderData.orderNumber || req.orderData._id}/${req.body.targetFolder}/${req.file.filename}`
+      : `${req.orderData.orderNumber || req.orderData._id}/${req.file.filename}`;
+    
+    const documentUrl = `/network-files/${relativePath}`;
+    
+    const document = {
+      name: req.file.originalname,
+      url: documentUrl,
+      networkPath: req.file.path,
+      uploadDate: new Date(),
+      orderId: new ObjectId(req.params.id),
+      size: req.file.size,
+      mimeType: req.file.mimetype,
+      uploadMode: 'network',
+      documentType: 'cam',
+      targetFolder: req.body.targetFolder || null
+    };
+    
+    const docResult = await ordersDb.collection('Document').insertOne(document);
+    
+    await client.close();
+    
+    res.json({
+      success: true,
+      message: 'CAM-Datei erfolgreich direkt ins Netzwerk hochgeladen',
+      filename: req.file.filename,
+      originalname: req.file.originalname,
+      path: documentUrl,
+      networkPath: req.file.path,
+      uploadMode: 'network',
+      documentId: docResult.insertedId.toString(),
+      targetFolder: req.body.targetFolder || null
+    });
+    
+  } catch (err) {
+    console.error('POST /api/orders/:id/upload-cam-file error:', err);
+    res.status(500).json({ error: 'Fehler beim Hochladen der CAM-Datei', details: err.message });
+  }
+});
+
 console.log('🚀 MongoDB-only Match Werkstatt Server');
 console.log('📁 All data operations use MongoDB directly');
 console.log('✅ No Prisma dependencies');
