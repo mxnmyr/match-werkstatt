@@ -6,6 +6,7 @@ import { useApp } from '../context/AppContext';
 import NetworkFileUpload from './NetworkFileUpload';
 import STLViewer from './STLViewer';
 import FilesMigrationStatus from './FilesMigrationStatus';
+import NetworkFilesViewer from './NetworkFilesViewer';
 
 interface OrderDetailsProps {
   order: Order;
@@ -75,6 +76,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
     console.log('OrderDetails: currentUser', state.currentUser);
     console.log('OrderDetails: currentOrder.status', currentOrder.status);
     console.log('OrderDetails: currentOrder', currentOrder);
+    console.log('OrderDetails: currentOrder.components', currentOrder.components);
     console.log('OrderDetails: currentOrder.reworkComments', currentOrder.reworkComments);
   }, [state.currentUser, currentOrder.status, currentOrder]);
 
@@ -541,16 +543,26 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                   </div>
                 )}
                 
-                {/* Datei-Migration Status */}
-                {(state.currentUser?.role === 'admin' || state.currentUser?.role === 'workshop') && (
+                {/* Datei-Migration Status - nur wenn nicht archiviert und Dateien zum Migrieren vorhanden */}
+                {currentOrder.status !== 'archived' && (state.currentUser?.role === 'admin' || state.currentUser?.role === 'workshop') && (
                   <div className="mb-6">
                     <FilesMigrationStatus 
                       orderId={currentOrder.id}
+                      hideIfComplete={true}
+                      hideIfNoFiles={true}
                       onStatusChange={(status) => {
                         // Optional: Status-Updates verarbeiten
                         console.log('Migration Status:', status);
                       }}
                     />
+                  </div>
+                )}
+                
+                {/* Netzwerkdateien-Viewer für alle Dateien (besonders wichtig für archivierte Aufträge) */}
+                {currentOrder.status === 'archived' && (
+                  <div className="mb-6">
+                    <h4 className="text-md font-semibold text-gray-900 mb-2">Alle Dateien im Netzwerkordner</h4>
+                    <NetworkFilesViewer orderId={currentOrder.id} />
                   </div>
                 )}
                 
@@ -790,7 +802,9 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Zugewiesen an:</span>
                     <span className="text-sm font-medium text-gray-900">
-                      {currentOrder.assignedTo ? 'Werkstatt Personal' : 'Nicht zugewiesen'}
+                      {currentOrder.assignedTo 
+                        ? (state.workshopAccounts.find(acc => acc.id === currentOrder.assignedTo)?.name || 'Werkstatt Personal')
+                        : 'Nicht zugewiesen'}
                     </span>
                   </div>
                 </div>

@@ -67,7 +67,7 @@ export default function ArchiveView({ onClose }: { onClose: () => void }) {
                   )}
                   <div>
                     <div className="font-semibold text-lg">{order.title}</div>
-                    <div className="text-sm text-gray-500">#{order.id.slice(-8)}</div>
+                    <div className="text-sm text-gray-500">#{order.orderNumber || order.id}</div>
                   </div>
                 </div>
                 <div className="flex gap-2">

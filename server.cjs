@@ -148,7 +148,7 @@ const memoryUpload = multer({
 });
 
 // MongoDB Connection Setup
-const MONGODB_URL = 'mongodb://localhost:27017';
+const MONGODB_URL = process.env.MONGODB_URL || 'mongodb://localhost:27017';
 const DB_NAME = 'matchdb';
 
 // Helper function: MongoDB connection
@@ -157,6 +157,85 @@ async function getDB() {
   await client.connect();
   const db = client.db(DB_NAME);
   return { client, db };
+}
+
+// Initialize MongoDB indexes on startup
+async function initializeIndexes() {
+  try {
+    const { client, db } = await getDB();
+    console.log('[MongoDB] Creating indexes...');
+    
+    // Order indexes
+    await db.collection('Order').createIndex({ orderNumber: 1 }, { unique: true, sparse: true });
+    await db.collection('Order').createIndex({ clientId: 1 });
+    await db.collection('Order').createIndex({ status: 1 });
+    await db.collection('Order').createIndex({ createdAt: -1 });
+    await db.collection('Order').createIndex({ deadline: 1 });
+    await db.collection('Order').createIndex({ assignedTo: 1 });
+    
+    // User indexes
+    await db.collection('User').createIndex({ username: 1 }, { unique: true });
+    await db.collection('User').createIndex({ role: 1 });
+    await db.collection('User').createIndex({ isActive: 1 });
+    
+    // Document indexes
+    await db.collection('Document').createIndex({ orderId: 1 });
+    
+    // NoteHistory indexes
+    await db.collection('NoteHistory').createIndex({ orderId: 1 });
+    await db.collection('NoteHistory').createIndex({ createdAt: -1 });
+    
+    // Component indexes
+    await db.collection('Component').createIndex({ orderId: 1 });
+    
+    // ComponentDocument indexes
+    await db.collection('ComponentDocument').createIndex({ componentId: 1 });
+    
+    // SystemConfig indexes
+    await db.collection('SystemConfig').createIndex({ key: 1 }, { unique: true });
+    
+    // Settings indexes
+    await db.collection('settings').createIndex({ type: 1 }, { unique: true });
+    
+    await client.close();
+    console.log('[MongoDB] Indexes created successfully');
+  } catch (error) {
+    console.error('[MongoDB] Error creating indexes:', error.message);
+  }
+}
+
+// Create default admin user if none exists
+async function ensureDefaultAdmin() {
+  try {
+    const { client, db } = await getDB();
+    
+    // Check if any admin user exists
+    const adminCount = await db.collection('User').countDocuments({ role: 'admin' });
+    
+    if (adminCount === 0) {
+      console.log('[MongoDB] No admin found, creating default admin...');
+      
+      const defaultAdmin = {
+        username: 'admin',
+        password: 'admin123',
+        name: 'System Administrator',
+        role: 'admin',
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      
+      await db.collection('User').insertOne(defaultAdmin);
+      console.log('✓ Default admin created successfully');
+      console.log('  Username: admin');
+      console.log('  Password: admin123');
+      console.log('  ⚠️  BITTE PASSWORT NACH ERSTEM LOGIN ÄNDERN!');
+    }
+    
+    await client.close();
+  } catch (error) {
+    console.error('[MongoDB] Error ensuring default admin:', error.message);
+  }
 }
 
 // Helper function: Convert MongoDB document to response format
@@ -585,10 +664,39 @@ app.get('/api/orders', async (req, res) => {
         }).toArray();
       }
       
+      // Enrich documents with IDs
+      const enrichedDocuments = documents.map(doc => ({
+        ...doc,
+        id: doc._id ? doc._id.toString() : doc.id,
+        _id: undefined
+      }));
+      
       // Load components
       const components = await db.collection('Component').find({ 
         orderId: new ObjectId(order._id) 
       }).toArray();
+      
+      // Enrich components with their documents
+      const enrichedComponents = await Promise.all(components.map(async (component) => {
+        // Support both ObjectId and String componentId (for backwards compatibility)
+        const compDocuments = await db.collection('Document').find({ 
+          $or: [
+            { componentId: component._id },
+            { componentId: component._id.toString() }
+          ]
+        }).toArray();
+        
+        const { _id, ...componentWithoutId } = component;
+        return {
+          ...componentWithoutId,
+          id: _id.toString(),
+          documents: compDocuments.map(doc => ({
+            ...doc,
+            id: doc._id.toString(),
+            _id: undefined
+          }))
+        };
+      }));
       
       // Load note history
       const noteHistory = await db.collection('NoteHistory').find({ 
@@ -601,8 +709,8 @@ app.get('/api/orders', async (req, res) => {
         ...order,
         id: order._id.toString(),
         _id: undefined,
-        documents: documents,
-        components: components,
+        documents: enrichedDocuments,
+        components: enrichedComponents,
         noteHistory: noteHistory,
         revisionHistory: order.revisionHistory || [],
         reworkComments: order.reworkComments || [],
@@ -657,16 +765,31 @@ app.get('/api/orders/:id', async (req, res) => {
     
     // Enrich components with their documents
     const enrichedComponents = await Promise.all(components.map(async (component) => {
+      // Support both ObjectId and String componentId (for backwards compatibility)
       const compDocuments = await db.collection('Document').find({ 
-        componentId: new ObjectId(component._id) 
+        $or: [
+          { componentId: component._id },
+          { componentId: component._id.toString() }
+        ]
       }).toArray();
       
       const { _id, ...componentWithoutId } = component;
       return {
         ...componentWithoutId,
         id: _id.toString(),
-        documents: compDocuments
+        documents: compDocuments.map(doc => ({
+          ...doc,
+          id: doc._id.toString(),
+          _id: undefined
+        }))
       };
+    }));
+    
+    // Enrich documents with IDs
+    const enrichedDocuments = documents.map(doc => ({
+      ...doc,
+      id: doc._id ? doc._id.toString() : doc.id,
+      _id: undefined
     }));
     
     await client.close();
@@ -675,7 +798,7 @@ app.get('/api/orders/:id', async (req, res) => {
       ...order,
       id: order._id.toString(),
       _id: undefined,
-      documents: documents,
+      documents: enrichedDocuments,
       components: enrichedComponents,
       noteHistory: noteHistory,
       revisionHistory: order.revisionHistory || [],
@@ -744,8 +867,12 @@ app.get('/api/orders/barcode/:code', async (req, res) => {
     
     // Enrich components with their documents
     const enrichedComponents = await Promise.all(components.map(async (component) => {
+      // Support both ObjectId and String componentId (for backwards compatibility)
       const compDocuments = await db.collection('Document').find({ 
-        componentId: new ObjectId(component._id) 
+        $or: [
+          { componentId: component._id },
+          { componentId: component._id.toString() }
+        ]
       }).toArray();
       
       const { _id, ...componentWithoutId } = component;
@@ -995,18 +1122,73 @@ app.put('/api/orders/:id', async (req, res) => {
       );
     }
 
-    // Get updated order
+    // Get updated order with all relations (like GET /api/orders/:id)
     const updatedOrder = await ordersCollection.findOne({ _id: new ObjectId(req.params.id) });
-    await client.close();
     
     if (!updatedOrder) {
+      await client.close();
       return res.status(404).json({ error: 'Order not found after update' });
     }
+
+    // Load documents
+    let orderDocuments = updatedOrder.documents || [];
+    if (orderDocuments.length === 0) {
+      orderDocuments = await db.collection('Document').find({ 
+        orderId: new ObjectId(req.params.id) 
+      }).toArray();
+    }
+    
+    // Enrich documents with IDs
+    const enrichedDocuments = orderDocuments.map(doc => ({
+      ...doc,
+      id: doc._id ? doc._id.toString() : doc.id,
+      _id: undefined
+    }));
+    
+    // Load components with their documents
+    const orderComponents = await db.collection('Component').find({ 
+      orderId: new ObjectId(req.params.id) 
+    }).toArray();
+    
+    const enrichedComponents = await Promise.all(orderComponents.map(async (component) => {
+      // Support both ObjectId and String componentId (for backwards compatibility)
+      const compDocuments = await db.collection('Document').find({ 
+        $or: [
+          { componentId: component._id },
+          { componentId: component._id.toString() }
+        ]
+      }).toArray();
+      
+      const { _id, ...componentWithoutId } = component;
+      return {
+        ...componentWithoutId,
+        id: _id.toString(),
+        documents: compDocuments.map(doc => ({
+          ...doc,
+          id: doc._id ? doc._id.toString() : doc.id,
+          _id: undefined
+        }))
+      };
+    }));
+    
+    // Load note history
+    const noteHistory = await db.collection('NoteHistory').find({ 
+      orderId: new ObjectId(req.params.id) 
+    })
+    .sort({ createdAt: -1 })
+    .toArray();
+    
+    await client.close();
 
     const responseOrder = {
       ...updatedOrder,
       id: updatedOrder._id.toString(),
       _id: undefined,
+      documents: enrichedDocuments,
+      components: enrichedComponents,
+      noteHistory: noteHistory,
+      revisionHistory: updatedOrder.revisionHistory || [],
+      reworkComments: updatedOrder.reworkComments || [],
       // Include title image metadata (not binary data) for frontend
       titleImage: updatedOrder.titleImage ? {
         filename: updatedOrder.titleImage.filename,
@@ -1017,6 +1199,7 @@ app.put('/api/orders/:id', async (req, res) => {
     };
     
     console.log('Final response documents:', responseOrder.documents?.length || 0);
+    console.log('Final response components:', responseOrder.components?.length || 0);
     res.json(responseOrder);
   } catch (err) {
     console.error('PUT /api/orders/:id error:', err);
@@ -1084,8 +1267,12 @@ app.post('/api/orders/:id/upload-title-image', memoryUpload.single('file'), asyn
     
     // Enrich components with their documents
     const enrichedComponents = await Promise.all(components.map(async (component) => {
+      // Support both ObjectId and String componentId (for backwards compatibility)
       const compDocuments = await db.collection('Document').find({ 
-        componentId: new ObjectId(component._id) 
+        $or: [
+          { componentId: component._id },
+          { componentId: component._id.toString() }
+        ]
       }).toArray();
       
       const { _id, ...componentWithoutId } = component;
@@ -1327,8 +1514,12 @@ app.get('/api/orders/:orderId/components', async (req, res) => {
     
     // Enrich components with their documents
     const enrichedComponents = await Promise.all(components.map(async (component) => {
+      // Support both ObjectId and String componentId (for backwards compatibility)
       const compDocuments = await db.collection('Document').find({ 
-        componentId: new ObjectId(component._id) 
+        $or: [
+          { componentId: component._id },
+          { componentId: component._id.toString() }
+        ]
       }).toArray();
       
       const { _id, ...componentWithoutId } = component;
@@ -1637,10 +1828,31 @@ app.post('/api/orders/:id/migrate-files', async (req, res) => {
       return res.status(404).json({ error: 'Auftrag nicht gefunden' });
     }
     
-    // Get all documents for this order
-    const documents = await ordersDb.collection('Document').find({ 
-      orderId: new ObjectId(req.params.id) 
+    // Check if documents are embedded in Order or in separate collection
+    let documents = [];
+    let documentsAreEmbedded = false;
+    
+    if (order.documents && order.documents.length > 0) {
+      // Documents are embedded in the Order
+      documents = order.documents.filter(doc => !doc.migrated); // Only non-migrated
+      documentsAreEmbedded = true;
+    } else {
+      // Documents are in separate collection (only order documents, not component documents)
+      documents = await ordersDb.collection('Document').find({ 
+        orderId: new ObjectId(req.params.id),
+        componentId: { $exists: false }, // Exclude component documents
+        migrated: { $ne: true } // Only non-migrated
+      }).toArray();
+    }
+    
+    // Get component documents (always from Document collection)
+    const componentDocuments = await ordersDb.collection('Document').find({ 
+      orderId: new ObjectId(req.params.id),
+      componentId: { $exists: true },
+      migrated: { $ne: true }
     }).toArray();
+    
+    console.log(`[Migration] Order documents: ${documents.length}, Component documents: ${componentDocuments.length}`);
     
     // Get network configuration from match_werkstatt (where settings are stored)
     const settingsDb = client.db('match_werkstatt');
@@ -1669,13 +1881,21 @@ app.post('/api/orders/:id/migrate-files', async (req, res) => {
       fs.mkdirSync(orderFolderPath, { recursive: true });
     }
     
+    // Create subfolder for component documents
+    const componentsFolderPath = path.join(orderFolderPath, 'Bauteile');
+    if (componentDocuments.length > 0 && !fs.existsSync(componentsFolderPath)) {
+      fs.mkdirSync(componentsFolderPath, { recursive: true });
+    }
+    
     // Migration statistics
     let migratedFiles = 0;
     const fileTypes = {};
     const errors = [];
-    
+    const migratedDocuments = []; // Track successfully migrated docs
+
     // Migrate each document
-    for (const document of documents) {
+    for (let i = 0; i < documents.length; i++) {
+      const document = documents[i];
       try {
         // Original file path
         const originalPath = path.join(uploadsDir, path.basename(document.url));
@@ -1685,30 +1905,56 @@ app.post('/api/orders/:id/migrate-files', async (req, res) => {
           continue;
         }
         
-        // Destination path
+        // Destination path - Dateiname mit korrekten Umlauten beibehalten
         const fileName = document.name || path.basename(document.url);
-        const destinationPath = path.join(orderFolderPath, fileName);
+        // Normalisiere den Dateinamen für das Dateisystem (NFC für Windows/Linux-Kompatibilität)
+        const normalizedFileName = fileName.normalize('NFC');
+        const destinationPath = path.join(orderFolderPath, normalizedFileName);
         
         // Copy file to network folder
         fs.copyFileSync(originalPath, destinationPath);
         
-        // Create network-accessible URL
-        const orderFolderName = order.orderNumber || order._id.toString();
-        const networkUrl = `/network-files/${orderFolderName}/${fileName}`;
+        // Create network-accessible URL - URL-encode für Sonderzeichen
+        const encodedFileName = encodeURIComponent(normalizedFileName);
+        const networkUrl = `/network-files/${orderFolderName}/${encodedFileName}`;
         
-        // Update document in database
-        await ordersDb.collection('Document').updateOne(
-          { _id: document._id },
-          { 
-            $set: { 
-              url: networkUrl,
-              networkPath: destinationPath,
-              originalUrl: document.url, // Keep reference to original location
-              migrated: true,
-              migratedAt: new Date()
+        if (documentsAreEmbedded) {
+          // Track migration for embedded documents
+          migratedDocuments.push({
+            index: i,
+            originalIndex: order.documents.findIndex(d => d.name === document.name && !d.migrated),
+            networkUrl,
+            networkPath: destinationPath,
+            originalUrl: document.url,
+            originalName: normalizedFileName
+          });
+        } else {
+          // Update document in separate collection
+          await ordersDb.collection('Document').updateOne(
+            { _id: document._id },
+            { 
+              $set: { 
+                url: networkUrl,
+                networkPath: destinationPath,
+                originalUrl: document.url, // Keep reference to original location
+                originalName: normalizedFileName, // Original-Dateiname mit Umlauten
+                migrated: true,
+                migratedAt: new Date()
+              }
             }
+          );
+        }
+        
+        // Delete original file from uploads folder after successful migration
+        try {
+          if (fs.existsSync(originalPath)) {
+            fs.unlinkSync(originalPath);
+            console.log(`[Migration] Deleted original file: ${originalPath}`);
           }
-        );
+        } catch (deleteError) {
+          console.warn(`[Migration] Could not delete original file ${originalPath}:`, deleteError.message);
+          // Don't fail migration if deletion fails
+        }
         
         // Track statistics
         migratedFiles++;
@@ -1718,6 +1964,85 @@ app.post('/api/orders/:id/migrate-files', async (req, res) => {
       } catch (copyError) {
         errors.push(`Fehler beim Kopieren von ${document.name}: ${copyError.message}`);
       }
+    }
+    
+    // Migrate component documents
+    for (const compDoc of componentDocuments) {
+      try {
+        const originalPath = path.join(uploadsDir, path.basename(compDoc.url));
+        
+        if (!fs.existsSync(originalPath)) {
+          errors.push(`Bauteil-Datei nicht gefunden: ${compDoc.name}`);
+          continue;
+        }
+        
+        const fileName = compDoc.name || path.basename(compDoc.url);
+        const normalizedFileName = fileName.normalize('NFC');
+        const destinationPath = path.join(componentsFolderPath, normalizedFileName);
+        
+        // Copy file to network folder
+        fs.copyFileSync(originalPath, destinationPath);
+        
+        // Create network-accessible URL
+        const encodedFileName = encodeURIComponent(normalizedFileName);
+        const networkUrl = `/network-files/${orderFolderName}/Bauteile/${encodedFileName}`;
+        
+        // Update component document in database
+        await ordersDb.collection('Document').updateOne(
+          { _id: compDoc._id },
+          { 
+            $set: { 
+              url: networkUrl,
+              networkPath: destinationPath,
+              originalUrl: compDoc.url,
+              originalName: normalizedFileName,
+              migrated: true,
+              migratedAt: new Date()
+            }
+          }
+        );
+        
+        // Delete original file
+        try {
+          if (fs.existsSync(originalPath)) {
+            fs.unlinkSync(originalPath);
+            console.log(`[Migration] Deleted component file: ${originalPath}`);
+          }
+        } catch (deleteError) {
+          console.warn(`[Migration] Could not delete component file ${originalPath}:`, deleteError.message);
+        }
+        
+        migratedFiles++;
+        const fileExtension = path.extname(fileName).toLowerCase();
+        fileTypes[fileExtension] = (fileTypes[fileExtension] || 0) + 1;
+        
+      } catch (copyError) {
+        errors.push(`Fehler beim Kopieren von Bauteil-Datei ${compDoc.name}: ${copyError.message}`);
+      }
+    }
+    
+    // Update embedded documents in Order if needed
+    if (documentsAreEmbedded && migratedDocuments.length > 0) {
+      const updatedDocuments = order.documents.map((doc, idx) => {
+        const migrated = migratedDocuments.find(m => m.originalIndex === idx);
+        if (migrated) {
+          return {
+            ...doc,
+            url: migrated.networkUrl,
+            networkPath: migrated.networkPath,
+            originalUrl: migrated.originalUrl,
+            originalName: migrated.originalName,
+            migrated: true,
+            migratedAt: new Date()
+          };
+        }
+        return doc;
+      });
+      
+      await ordersDb.collection('Order').updateOne(
+        { _id: new ObjectId(req.params.id) },
+        { $set: { documents: updatedDocuments } }
+      );
     }
     
     await client.close();
@@ -1746,23 +2071,66 @@ app.get('/api/orders/:id/migration-status', async (req, res) => {
     await client.connect();
     
     const ordersDb = client.db('matchdb');
-    const documents = await ordersDb.collection('Document').find({ 
-      orderId: new ObjectId(req.params.id) 
+    
+    // Check both embedded documents in Order and separate Document collection
+    const order = await ordersDb.collection('Order').findOne({ _id: new ObjectId(req.params.id) });
+    
+    // Get order documents (not component documents)
+    const separateOrderDocuments = await ordersDb.collection('Document').find({ 
+      orderId: new ObjectId(req.params.id),
+      componentId: { $exists: false }
+    }).toArray();
+    
+    // Get component documents
+    const componentDocuments = await ordersDb.collection('Document').find({ 
+      orderId: new ObjectId(req.params.id),
+      componentId: { $exists: true }
     }).toArray();
     
     await client.close();
     
+    // Combine embedded and separate documents
+    let allDocuments = [];
+    
+    // Add embedded documents from Order
+    if (order && order.documents && order.documents.length > 0) {
+      allDocuments = order.documents.map((doc, index) => ({
+        _id: doc.id || doc._id || `embedded-${index}`,
+        name: doc.name,
+        url: doc.url,
+        migrated: doc.migrated || false,
+        migratedAt: doc.migratedAt,
+        originalUrl: doc.originalUrl,
+        type: 'order'
+      }));
+    } else if (separateOrderDocuments.length > 0) {
+      // Add separate order documents if Order has none embedded
+      allDocuments = separateOrderDocuments.map(doc => ({
+        ...doc,
+        type: 'order'
+      }));
+    }
+    
+    // Add component documents
+    for (const compDoc of componentDocuments) {
+      allDocuments.push({
+        ...compDoc,
+        type: 'component'
+      });
+    }
+    
     const migrationStatus = {
-      totalFiles: documents.length,
-      migratedFiles: documents.filter(doc => doc.migrated).length,
-      pendingFiles: documents.filter(doc => !doc.migrated).length,
-      files: documents.map(doc => ({
-        id: doc._id.toString(),
+      totalFiles: allDocuments.length,
+      migratedFiles: allDocuments.filter(doc => doc.migrated).length,
+      pendingFiles: allDocuments.filter(doc => !doc.migrated).length,
+      files: allDocuments.map(doc => ({
+        id: doc._id ? doc._id.toString() : doc.id,
         name: doc.name,
         migrated: !!doc.migrated,
         migratedAt: doc.migratedAt,
         currentUrl: doc.url,
-        originalUrl: doc.originalUrl || doc.url
+        originalUrl: doc.originalUrl || doc.url,
+        type: doc.type || 'order'
       }))
     };
     
@@ -2542,8 +2910,15 @@ wss.on('connection', (ws) => {
   }));
 });
 
-server.listen(port, () => {
+server.listen(port, async () => {
   console.log(`Backend listening on http://localhost:${port}`);
+  
+  // Initialize MongoDB indexes
+  await initializeIndexes();
+  
+  // Ensure default admin exists
+  await ensureDefaultAdmin();
+  
   console.log('✓ Direct MongoDB connection established');
   console.log('🔌 WebSocket server running');
 });

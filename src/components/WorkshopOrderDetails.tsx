@@ -81,22 +81,16 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   useEffect(() => {
     const updatedOrder = state.orders.find(o => o.id === order.id);
     if (updatedOrder) {
-      console.log('WorkshopOrderDetails: Updating localOrder from context');
-      console.log('Current reworkComments:', updatedOrder.reworkComments);
-      console.log('Components:', updatedOrder.components);
       setLocalOrder(updatedOrder);
     }
   }, [state.orders, order.id]);
 
   useEffect(() => {
-    console.log('Title image check:', localOrder.titleImage);
     if (localOrder.titleImage && localOrder.titleImage.hasImage) {
       // Append a timestamp to break browser cache when the image is updated
       const url = `http://localhost:3001/api/orders/${localOrder.id}/title-image?t=${new Date().getTime()}`;
-      console.log('Setting title image URL:', url);
       setTitleImageUrl(url);
     } else {
-      console.log('No title image found, clearing URL');
       setTitleImageUrl('');
     }
   }, [localOrder.titleImage, localOrder.id]);
@@ -263,8 +257,6 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
       // müssen wir die URL im lokalen State "künstlich" erzeugen, um eine Neuanzeige zu triggern.
       // Ein Zeitstempel sorgt für einen einzigartigen Wert.
       const updatedOrderFromServer = await response.json();
-      console.log('Upload response:', updatedOrderFromServer);
-      console.log('Title image in response:', updatedOrderFromServer.titleImage);
       setLocalOrder(updatedOrderFromServer);
 
       dispatch({ type: 'SHOW_NOTIFICATION', payload: { message: 'Titelbild erfolgreich aktualisiert.', type: 'success' } });
@@ -287,8 +279,27 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   };
 
   const handleArchive = async () => {
+    // Prüfe ob Endabnahme durch WiMi erfolgt ist (confirmationDate muss gesetzt sein)
+    if (!localOrder.confirmationDate) {
+      dispatch({ 
+        type: 'SHOW_NOTIFICATION', 
+        payload: { 
+          message: 'Archivierung nicht möglich: Der Auftrag muss zuerst vom Kunden bestätigt werden (Endabnahme).', 
+          type: 'error' 
+        } 
+      });
+      return;
+    }
     updateOrder({ status: 'archived' }, 'Auftrag wurde archiviert');
     onClose();
+  };
+
+  // Prüfe ob alle Unteraufgaben erledigt sind
+  const allSubTasksCompleted = () => {
+    if (!localOrder.subTasks || localOrder.subTasks.length === 0) {
+      return true; // Keine Unteraufgaben = OK
+    }
+    return localOrder.subTasks.every((task: any) => task.status === 'completed');
   };
 
   // Remove a temporary subtask document from local state
@@ -387,10 +398,6 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
             }
           });
           if (response.ok) {
-            console.log(`[Workshop Download] Using direct file access for: ${doc.name}`);
-            console.log(`[Workshop Download] File path: ${response.headers.get('X-File-Path')}`);
-            console.log(`[Workshop Download] File mtime: ${response.headers.get('X-File-Mtime')}`);
-            
             // Use a new window to force fresh download
             const newWindow = window.open(directUrl, '_blank');
             if (newWindow) {
@@ -403,7 +410,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
             return;
           }
         } catch (directError) {
-          console.log('Direct file access failed, trying document ID method');
+          // Direct file access failed, trying document ID method
         }
       }
 
@@ -423,10 +430,6 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
             }
           });
           if (response.ok) {
-            console.log(`[Workshop Download] Using document ID access for: ${doc.name}`);
-            console.log(`[Workshop Download] File path: ${response.headers.get('X-File-Path')}`);
-            console.log(`[Workshop Download] File mtime: ${response.headers.get('X-File-Mtime')}`);
-            
             // Use a new window to force fresh download
             const newWindow = window.open(idUrl, '_blank');
             if (newWindow) {
@@ -437,7 +440,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
             return;
           }
         } catch (idError) {
-          console.log('Document ID access failed, trying URL method');
+          // Document ID access failed, trying URL method
         }
       }
 
@@ -445,7 +448,6 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
       if (doc.url) {
         const base = doc.url.startsWith('/uploads/') ? `http://localhost:3001${doc.url}` : doc.url;
         const withTs = base.includes('?') ? `${base}&cb=${cacheBuster}` : `${base}?cb=${cacheBuster}`;
-        console.log(`[Workshop Download] Using legacy URL access for: ${doc.name}`);
         window.location.href = withTs;
         return;
       }
@@ -627,7 +629,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                         setTitleImageUrl(''); // Clear the URL on error
                       }}
                       onLoad={() => {
-                        console.log('Image loaded successfully:', titleImageUrl);
+                        // Image loaded successfully
                       }}
                     />
                   ) : (
@@ -806,7 +808,6 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                   <h4 className="text-md font-semibold text-gray-900 mb-2">Bauteile</h4>
                   <div className="space-y-4">
                     {localOrder.components.map((component) => {
-                      console.log('Rendering component:', component);
                       // Use _id if id is not available (backwards compatibility)
                       const componentId = component.id || (component as any)._id;
                       // Use title if available, otherwise name (backwards compatibility)  
@@ -1153,11 +1154,29 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                     
                     {localOrder.status === 'in_progress' && (
                       <button
-                        onClick={() => handleStatusChange('completed')}
-                        className="flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        onClick={() => {
+                          if (!allSubTasksCompleted()) {
+                            dispatch({ 
+                              type: 'SHOW_NOTIFICATION', 
+                              payload: { 
+                                message: 'Auftrag kann nicht abgeschlossen werden: Nicht alle Unteraufgaben sind erledigt!', 
+                                type: 'error' 
+                              } 
+                            });
+                            return;
+                          }
+                          handleStatusChange('waiting_confirmation');
+                        }}
+                        disabled={!allSubTasksCompleted()}
+                        className={`flex items-center justify-center px-4 py-2 rounded-lg transition-colors ${
+                          allSubTasksCompleted() 
+                            ? 'bg-green-600 text-white hover:bg-green-700' 
+                            : 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                        }`}
+                        title={!allSubTasksCompleted() ? 'Alle Unteraufgaben müssen erledigt sein' : ''}
                       >
                         <Check className="w-4 h-4 mr-2" />
-                        Abschließen
+                        Zur Abnahme freigeben
                       </button>
                     )}
                     

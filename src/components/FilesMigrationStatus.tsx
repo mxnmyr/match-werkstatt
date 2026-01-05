@@ -31,9 +31,11 @@ interface MigrationStatus {
 interface FilesMigrationStatusProps {
   orderId: string;
   onStatusChange?: (status: MigrationStatus) => void;
+  hideIfComplete?: boolean; // Neues Prop: Verstecke wenn alles migriert
+  hideIfNoFiles?: boolean;  // Neues Prop: Verstecke wenn keine Dateien
 }
 
-export default function FilesMigrationStatus({ orderId, onStatusChange }: FilesMigrationStatusProps) {
+export default function FilesMigrationStatus({ orderId, onStatusChange, hideIfComplete = false, hideIfNoFiles = false }: FilesMigrationStatusProps) {
   const [migrationStatus, setMigrationStatus] = useState<MigrationStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -150,6 +152,16 @@ export default function FilesMigrationStatus({ orderId, onStatusChange }: FilesM
 
   const { totalFiles, migratedFiles, pendingFiles, files } = migrationStatus;
   const migrationProgress = totalFiles > 0 ? (migratedFiles / totalFiles) * 100 : 0;
+
+  // Verstecke Komponente wenn hideIfNoFiles und keine Dateien vorhanden
+  if (hideIfNoFiles && totalFiles === 0) {
+    return null;
+  }
+
+  // Verstecke Komponente wenn hideIfComplete und alles migriert
+  if (hideIfComplete && pendingFiles === 0) {
+    return null;
+  }
 
   return (
     <div className="space-y-4">
