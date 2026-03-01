@@ -49,7 +49,7 @@ export default function FilesMigrationStatus({ orderId, onStatusChange, hideIfCo
     setError(null);
     
     try {
-      const response = await fetch(`http://localhost:3001/api/orders/${orderId}/migration-status`);
+      const response = await fetch(`/api/orders/${orderId}/migration-status`);
       if (!response.ok) {
         throw new Error('Fehler beim Laden des Migrationsstatus');
       }
@@ -72,7 +72,7 @@ export default function FilesMigrationStatus({ orderId, onStatusChange, hideIfCo
     setError(null);
     
     try {
-      const response = await fetch(`http://localhost:3001/api/orders/${orderId}/migrate-files`, {
+      const response = await fetch(`/api/orders/${orderId}/migrate-files`, {
         method: 'POST'
       });
       
@@ -96,7 +96,7 @@ export default function FilesMigrationStatus({ orderId, onStatusChange, hideIfCo
     setError(null);
     
     try {
-      const response = await fetch(`http://localhost:3001/api/orders/${orderId}/rollback-migration`, {
+      const response = await fetch(`/api/orders/${orderId}/rollback-migration`, {
         method: 'POST'
       });
       
@@ -301,7 +301,7 @@ export default function FilesMigrationStatus({ orderId, onStatusChange, hideIfCo
                   )}
                   
                   <a
-                    href={`http://localhost:3001/api/documents/${file.id}`}
+                    href={`/api/documents/${file.id}`}
                     className="text-blue-600 hover:text-blue-800"
                     title="Herunterladen"
                   >

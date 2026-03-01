@@ -32,7 +32,7 @@ export default function EditOrder({ order, onClose, onOrderUpdated }: EditOrderP
             const formData = new FormData();
             formData.append('file', doc.file);
             
-            const uploadResponse = await fetch('http://localhost:3001/api/upload', {
+            const uploadResponse = await fetch('/api/upload', {
               method: 'POST',
               body: formData
             });
@@ -71,7 +71,7 @@ export default function EditOrder({ order, onClose, onOrderUpdated }: EditOrderP
                 const formData = new FormData();
                 formData.append('file', doc.file);
                 
-                const uploadResponse = await fetch('http://localhost:3001/api/upload', {
+                const uploadResponse = await fetch('/api/upload', {
                   method: 'POST',
                   body: formData
                 });
@@ -129,7 +129,7 @@ export default function EditOrder({ order, onClose, onOrderUpdated }: EditOrderP
 
       // Auftrag in der Datenbank aktualisieren
       console.log('=== FRONTEND: Sending PUT Request ===');
-      const response = await fetch(`http://localhost:3001/api/orders/${order.id}`, {
+      const response = await fetch(`/api/orders/${order.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -470,7 +470,7 @@ export default function EditOrder({ order, onClose, onOrderUpdated }: EditOrderP
                               <div className="flex items-center space-x-2 ml-2">
                                 {!doc.file && (
                                   <a
-                                    href={`http://localhost:3001${doc.url}`}
+                                    href={`${doc.url}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-blue-600 hover:text-blue-800 text-sm font-medium"

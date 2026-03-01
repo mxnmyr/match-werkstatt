@@ -88,7 +88,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
   useEffect(() => {
     if (localOrder.titleImage && localOrder.titleImage.hasImage) {
       // Append a timestamp to break browser cache when the image is updated
-      const url = `http://localhost:3001/api/orders/${localOrder.id}/title-image?t=${new Date().getTime()}`;
+      const url = `/api/orders/${localOrder.id}/title-image?t=${new Date().getTime()}`;
       setTitleImageUrl(url);
     } else {
       setTitleImageUrl('');
@@ -138,7 +138,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     }
 
     try {
-      const response = await fetch(`http://localhost:3001/api/orders/${localOrder.id}`, {
+      const response = await fetch(`/api/orders/${localOrder.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedFields)
@@ -242,7 +242,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     formData.append('file', file);
 
     try {
-      const response = await fetch(`http://localhost:3001/api/orders/${localOrder.id}/upload-title-image`, {
+      const response = await fetch(`/api/orders/${localOrder.id}/upload-title-image`, {
         method: 'POST',
         body: formData,
       });
@@ -384,7 +384,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
       
       // Priority 1: Try direct file access by original filename (checks network folder first)
       if (localOrder.id && doc.name) {
-        const baseUrl = `http://localhost:3001/api/orders/${localOrder.id}/files/${encodeURIComponent(doc.name)}`;
+        const baseUrl = `/api/orders/${localOrder.id}/files/${encodeURIComponent(doc.name)}`;
         const directUrl = `${baseUrl}?cb=${cacheBuster}&_nocache=1`;
         
         try {
@@ -416,7 +416,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
 
       // Priority 2: Try document ID method if present
       if (doc.id) {
-        const baseIdUrl = `http://localhost:3001/api/documents/${doc.id}`;
+        const baseIdUrl = `/api/documents/${doc.id}`;
         const idUrl = `${baseIdUrl}?cb=${cacheBuster}&_nocache=1`;
         
         try {
@@ -446,7 +446,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
 
       // Priority 3: Fallback to direct URL (legacy)
       if (doc.url) {
-        const base = doc.url.startsWith('/uploads/') ? `http://localhost:3001${doc.url}` : doc.url;
+        const base = doc.url.startsWith('/uploads/') ? `${doc.url}` : doc.url;
         const withTs = base.includes('?') ? `${base}&cb=${cacheBuster}` : `${base}?cb=${cacheBuster}`;
         window.location.href = withTs;
         return;
@@ -493,7 +493,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
     }
     if (!window.confirm('Diesen Auftrag wirklich unwiderruflich löschen?')) return;
     try {
-      const response = await fetch(`http://localhost:3001/api/orders/${localOrder.id}`, {
+      const response = await fetch(`/api/orders/${localOrder.id}`, {
         method: 'DELETE',
       });
       if (!response.ok) {
@@ -789,7 +789,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                       .map((doc) => (
                         <div key={`viewer-${doc.id}`} className="mt-2 p-4 bg-gray-50 rounded-lg">
                           <STLViewer
-                            fileUrl={`http://localhost:3001${doc.url}`}
+                            fileUrl={`${doc.url}`}
                             fileName={doc.name}
                             className="w-full"
                             showControls={true}
@@ -863,7 +863,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                                 .map((doc) => (
                                   <div key={`viewer-${doc.id}`} className="mt-2 p-4 bg-gray-50 rounded-lg">
                                     <STLViewer
-                                      fileUrl={`http://localhost:3001${doc.url}`}
+                                      fileUrl={`${doc.url}`}
                                       fileName={doc.name}
                                       className="w-full"
                                       showControls={true}
@@ -913,7 +913,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                                   });
                                   
                                   // Reload order to get updated components with documents
-                                  fetch(`http://localhost:3001/api/orders/${localOrder.id}`)
+                                  fetch(`/api/orders/${localOrder.id}`)
                                     .then(response => response.json())
                                     .then(updatedOrder => {
                                       dispatch({ type: 'UPDATE_ORDER', payload: updatedOrder });
@@ -1310,7 +1310,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
                       });
                       
                       // Reload order to get updated documents
-                      fetch(`http://localhost:3001/api/orders/${localOrder.id}`)
+                      fetch(`/api/orders/${localOrder.id}`)
                         .then(response => response.json())
                         .then(data => {
                           setLocalOrder(data);
@@ -1624,7 +1624,7 @@ export default function WorkshopOrderDetails({ order, onClose }: WorkshopOrderDe
             });
             
             // Reload order to update documents
-            fetch(`http://localhost:3001/api/orders/${localOrder.id}`)
+            fetch(`/api/orders/${localOrder.id}`)
               .then(response => response.json())
               .then(data => {
                 setLocalOrder(data);

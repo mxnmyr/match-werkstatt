@@ -54,7 +54,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
   useEffect(() => {
     if (currentOrder.titleImage) {
       // Hänge einen Zeitstempel an, um den Browser-Cache zu umgehen
-      setTitleImageUrl(`http://localhost:3001/api/orders/${currentOrder.id}/title-image?t=${new Date().getTime()}`);
+      setTitleImageUrl(`/api/orders/${currentOrder.id}/title-image?t=${new Date().getTime()}`);
     } else {
       setTitleImageUrl('');
     }
@@ -123,7 +123,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
       
       // Priority 1: Try direct file access by original filename (checks network folder first)
       if (currentOrder.id && doc.name) {
-        const baseUrl = `http://localhost:3001/api/orders/${currentOrder.id}/files/${encodeURIComponent(doc.name)}`;
+        const baseUrl = `/api/orders/${currentOrder.id}/files/${encodeURIComponent(doc.name)}`;
         const directUrl = `${baseUrl}?cb=${cacheBuster}&_nocache=1`;
         
         try {
@@ -159,7 +159,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
       
       // Priority 2: Try document ID method (existing fallback)
       if (doc.id) {
-        const baseIdUrl = `http://localhost:3001/api/documents/${doc.id}`;
+        const baseIdUrl = `/api/documents/${doc.id}`;
         const idUrl = `${baseIdUrl}?cb=${cacheBuster}&_nocache=1`;
         
         try {
@@ -193,7 +193,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
       
       // Priority 3: Fallback to direct URL (legacy method)
       if (doc.url) {
-        const base = doc.url.startsWith('/uploads/') ? `http://localhost:3001${doc.url}` : doc.url;
+        const base = doc.url.startsWith('/uploads/') ? `${doc.url}` : doc.url;
         const withTs = base.includes('?') ? `${base}&cb=${cacheBuster}` : `${base}?cb=${cacheBuster}`;
         console.log(`[Download] Using legacy URL access for: ${doc.name}`);
         window.location.href = withTs;
@@ -228,7 +228,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
       const updatedOrder = { ...currentOrder, [field]: value };
       dispatch({ type: 'UPDATE_ORDER', payload: updatedOrder });
       
-      const response = await fetch(`http://localhost:3001/api/orders/${currentOrder.id}`, {
+      const response = await fetch(`/api/orders/${currentOrder.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [field]: value }),
@@ -257,7 +257,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
     }
     if (!window.confirm('Diesen Auftrag wirklich unwiderruflich löschen?')) return;
     try {
-      const response = await fetch(`http://localhost:3001/api/orders/${currentOrder.id}`, {
+      const response = await fetch(`/api/orders/${currentOrder.id}`, {
         method: 'DELETE',
       });
       if (!response.ok) {
@@ -287,7 +287,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
         updatedAt: new Date(),
       };
       console.log('PUT /api/orders/:id (Bestätigen):', updatedOrder);
-      const response = await fetch(`http://localhost:3001/api/orders/${currentOrder.id}`, {
+      const response = await fetch(`/api/orders/${currentOrder.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedOrder),
@@ -349,7 +349,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
       console.log('===============================================');
       
       console.log('PUT /api/orders/:id (Nacharbeit):', requestBody);
-      const response = await fetch(`http://localhost:3001/api/orders/${currentOrder.id}`, {
+      const response = await fetch(`/api/orders/${currentOrder.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
@@ -518,7 +518,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                         });
                         
                         // Reload order to get updated documents
-                        fetch(`http://localhost:3001/api/orders/${currentOrder.id}`)
+                        fetch(`/api/orders/${currentOrder.id}`)
                           .then(response => response.json())
                           .then(data => {
                             dispatch({
@@ -624,7 +624,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                         {isSTLFile(doc.name) && showSTLViewers[doc.id] && (
                           <div className="p-4 bg-gray-50">
                             <STLViewer
-                              fileUrl={`http://localhost:3001${doc.url}`}
+                              fileUrl={`${doc.url}`}
                               fileName={doc.name}
                               className="w-full"
                               showControls={true}
@@ -703,7 +703,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                                   });
                                   
                                   // Reload order to get updated documents
-                                  fetch(`http://localhost:3001/api/orders/${currentOrder.id}`)
+                                  fetch(`/api/orders/${currentOrder.id}`)
                                     .then(response => response.json())
                                     .then(data => {
                                       dispatch({
@@ -767,7 +767,7 @@ export default function OrderDetails({ order, onClose }: OrderDetailsProps) {
                                 isSTLFile(doc.name) && showSTLViewers[doc.id] && (
                                   <div key={`viewer-${doc.id}`} className="mt-2 p-4 bg-gray-50 rounded-lg">
                                     <STLViewer
-                                      fileUrl={`http://localhost:3001${doc.url}`}
+                                      fileUrl={`${doc.url}`}
                                       fileName={doc.name}
                                       className="w-full"
                                       showControls={true}

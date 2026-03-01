@@ -250,7 +250,7 @@ export class OrderPDFGenerator {
     try {
       // Dokument vom Server laden - korrekter API-Pfad
       const encodedName = encodeURIComponent(document.name);
-      const response = await fetch(`http://localhost:3001/api/orders/${this.order.id}/files/${encodedName}`);
+      const response = await fetch(`/api/orders/${this.order.id}/files/${encodedName}`);
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);

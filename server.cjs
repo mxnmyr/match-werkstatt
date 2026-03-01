@@ -32,9 +32,12 @@ console.log('[HYBRID-AUTH] LDAP-Konfiguration geladen:', {
 const app = express();
 const port = 3001;
 
-// CORS
+// CORS - dynamisch konfigurierbar für Docker
+const corsOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',')
+  : true; // true = alle Origins erlauben
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5175'],
+  origin: corsOrigins,
   credentials: true
 }));
 
@@ -148,8 +151,9 @@ const memoryUpload = multer({
 });
 
 // MongoDB Connection Setup
+// Docker: mongodb://matchuser:matchpass@mongodb:27017/matchdb?authSource=matchdb
 const MONGODB_URL = process.env.MONGODB_URL || 'mongodb://localhost:27017';
-const DB_NAME = 'matchdb';
+const DB_NAME = process.env.DB_NAME || 'matchdb';
 
 // Helper function: MongoDB connection
 async function getDB() {
@@ -2910,8 +2914,8 @@ wss.on('connection', (ws) => {
   }));
 });
 
-server.listen(port, async () => {
-  console.log(`Backend listening on http://localhost:${port}`);
+server.listen(port, '0.0.0.0', async () => {
+  console.log(`Backend listening on http://0.0.0.0:${port}`);
   
   // Initialize MongoDB indexes
   await initializeIndexes();
