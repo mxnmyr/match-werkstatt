@@ -17,6 +17,10 @@ const ldapConfig = {
   useTLS: process.env.LDAP_USE_TLS === 'true',
   baseDN: process.env.LDAP_BASE_DN || 'dc=company,dc=local',
   userSearchBase: process.env.LDAP_USER_SEARCH_BASE || 'ou=users,dc=company,dc=local',
+  domain: process.env.LDAP_DOMAIN || '',
+  userDnTemplates: process.env.LDAP_USER_DN_TEMPLATES
+    ? process.env.LDAP_USER_DN_TEMPLATES.split(',').map((item) => item.trim()).filter(Boolean)
+    : [],
   bindDN: process.env.LDAP_BIND_DN || '',
   bindPassword: process.env.LDAP_BIND_PASSWORD || ''
 };
@@ -245,11 +249,38 @@ async function ensureDefaultAdmin() {
 // Helper function: Convert MongoDB document to response format
 function convertMongoDoc(doc) {
   if (!doc) return null;
+
+  const normalizedRole = normalizeUserRole(doc.role);
   return {
     ...doc,
+    role: normalizedRole || doc.role,
     id: doc._id.toString(),
     _id: undefined
   };
+}
+
+function normalizeUserRole(role) {
+  if (!role) {
+    return role;
+  }
+
+  const roleMap = {
+    kunde: 'client',
+    client: 'client',
+    werkstatt: 'workshop',
+    workshop: 'workshop',
+    admin: 'admin'
+  };
+
+  return roleMap[role] || role;
+}
+
+function normalizeIncomingRole(role) {
+  const normalized = normalizeUserRole(role);
+  if (['client', 'workshop', 'admin'].includes(normalized)) {
+    return normalized;
+  }
+  return null;
 }
 
 // Helper function: Convert array of MongoDB documents
@@ -329,6 +360,11 @@ app.post('/api/users', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ success: false, message: 'Benutzername und Passwort erforderlich' });
+    }
+
     console.log(`[HYBRID-AUTH] Login-Versuch für: ${username}`);
     
     let userInfo = null;
@@ -355,6 +391,8 @@ app.post('/api/login', async (req, res) => {
 
         if (localUser) {
           console.log('[HYBRID-AUTH] Lokaler Benutzer gefunden - aktualisiere LDAP-Daten');
+          const normalizedRole = normalizeIncomingRole(localUser.role) || 'client';
+
           // Aktualisiere LDAP-Daten, behalte lokale Rollen
           await db.collection('User').updateOne(
             { _id: localUser._id },
@@ -362,6 +400,7 @@ app.post('/api/login', async (req, res) => {
               $set: {
                 email: userInfo.email,
                 name: userInfo.name,
+                role: normalizedRole,
                 lastLdapLogin: new Date(),
                 authSource: 'ldap'
               }
@@ -408,14 +447,15 @@ app.post('/api/login', async (req, res) => {
     
     if (user && user.password === password) {
       console.log('[HYBRID-AUTH] Lokale Authentifizierung erfolgreich');
+      const normalizedRole = normalizeIncomingRole(user.role) || 'client';
       
-      if (user.role === 'client' && user.isApproved === false) {
+      if (normalizedRole === 'client' && user.isApproved === false) {
         return res.status(403).json({ success: false, message: 'Account noch nicht bestätigt' });
       }
       
       return res.json({ 
         success: true, 
-        user: convertMongoDoc(user),
+        user: convertMongoDoc({ ...user, role: normalizedRole }),
         authSource: 'local'
       });
     }
@@ -443,7 +483,8 @@ app.get('/api/ldap/test', async (req, res) => {
         host: ldapConfig.host,
         port: ldapConfig.port,
         baseDN: ldapConfig.baseDN,
-        userSearchBase: ldapConfig.userSearchBase
+        userSearchBase: ldapConfig.userSearchBase,
+        domain: ldapConfig.domain
       },
       message: isConnected ? 'LDAP-Verbindung erfolgreich' : 'LDAP-Verbindung fehlgeschlagen'
     });
@@ -457,10 +498,123 @@ app.get('/api/ldap/test', async (req, res) => {
   }
 });
 
+app.post('/api/ldap/test-auth', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ success: false, message: 'Username und Passwort erforderlich' });
+    }
+
+    const userInfo = await ldapAuth.authenticate(username, password);
+    if (!userInfo) {
+      return res.status(401).json({ success: false, message: 'LDAP-Authentifizierung fehlgeschlagen' });
+    }
+
+    return res.json({ success: true, user: userInfo });
+  } catch (err) {
+    console.error('[LDAP-TEST-AUTH] Error:', err);
+    return res.status(500).json({ success: false, message: 'Fehler beim LDAP-Test', error: err.message });
+  }
+});
+
+app.get('/api/ldap/users', async (req, res) => {
+  try {
+    const { client, db } = await getDB();
+    const users = await db.collection('User').find({
+      $or: [
+        { authSource: 'ldap' },
+        { lastLdapLogin: { $exists: true } },
+        { lastLdapSync: { $exists: true } }
+      ]
+    }).sort({ username: 1 }).toArray();
+    await client.close();
+
+    const mappedUsers = users.map((user) => ({
+      username: user.username,
+      email: user.email || null,
+      displayName: user.name || null,
+      localRole: normalizeIncomingRole(user.role),
+      lastSync: (user.lastLdapLogin || user.lastLdapSync || user.updatedAt || user.createdAt || null)
+    }));
+
+    return res.json({ success: true, users: mappedUsers });
+  } catch (err) {
+    console.error('[LDAP-USERS] Error:', err);
+    return res.status(500).json({ success: false, message: 'Fehler beim Laden der LDAP-Benutzer', error: err.message });
+  }
+});
+
+app.post('/api/ldap/sync', async (req, res) => {
+  try {
+    const { client, db } = await getDB();
+    const result = await db.collection('User').updateMany(
+      {
+        $or: [
+          { authSource: 'ldap' },
+          { lastLdapLogin: { $exists: true } }
+        ]
+      },
+      {
+        $set: {
+          authSource: 'ldap',
+          lastLdapSync: new Date()
+        }
+      }
+    );
+    await client.close();
+
+    return res.json({
+      success: true,
+      synchronized: result.modifiedCount,
+      message: 'LDAP-Benutzer wurden markiert/synchronisiert'
+    });
+  } catch (err) {
+    console.error('[LDAP-SYNC] Error:', err);
+    return res.status(500).json({ success: false, message: 'Fehler bei der LDAP-Synchronisation', error: err.message });
+  }
+});
+
+app.put('/api/ldap/users/:username/role', async (req, res) => {
+  try {
+    const normalizedRole = normalizeIncomingRole(req.body.role);
+    if (!normalizedRole) {
+      return res.status(400).json({ success: false, message: 'Ungültige Rolle' });
+    }
+
+    const { client, db } = await getDB();
+    const user = await db.collection('User').findOne({ username: req.params.username });
+
+    if (!user) {
+      await client.close();
+      return res.status(404).json({ success: false, message: 'Benutzer nicht gefunden' });
+    }
+
+    await db.collection('User').updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          role: normalizedRole,
+          roleUpdatedAt: new Date()
+        }
+      }
+    );
+
+    await client.close();
+    return res.json({ success: true, message: `Rolle auf '${normalizedRole}' aktualisiert` });
+  } catch (err) {
+    console.error('[LDAP-ROLE-UPDATE] Error:', err);
+    return res.status(500).json({ success: false, message: 'Fehler beim Aktualisieren der Rolle', error: err.message });
+  }
+});
+
 // LDAP Benutzer-Rolle aktualisieren
 app.put('/api/users/:id/role', async (req, res) => {
   try {
-    const { role } = req.body;
+    const role = normalizeIncomingRole(req.body.role);
+    if (!role) {
+      return res.status(400).json({ error: 'Ungültige Rolle' });
+    }
     const { client, db } = await getDB();
     
     console.log(`[HYBRID-AUTH] Aktualisiere Rolle für Benutzer ${req.params.id} zu: ${role}`);
