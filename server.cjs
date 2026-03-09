@@ -19,7 +19,7 @@ const ldapConfig = {
   userSearchBase: process.env.LDAP_USER_SEARCH_BASE || 'ou=users,dc=company,dc=local',
   domain: process.env.LDAP_DOMAIN || '',
   userDnTemplates: process.env.LDAP_USER_DN_TEMPLATES
-    ? process.env.LDAP_USER_DN_TEMPLATES.split(',').map((item) => item.trim()).filter(Boolean)
+    ? process.env.LDAP_USER_DN_TEMPLATES.split(/[;\n]/).map((item) => item.trim()).filter(Boolean)
     : [],
   bindDN: process.env.LDAP_BIND_DN || '',
   bindPassword: process.env.LDAP_BIND_PASSWORD || ''

@@ -26,13 +26,31 @@ LDAP_DOMAIN=company.local
 
 # Optional: mehrere DN-Pattern in Reihenfolge testen
 # Platzhalter: {{username}}
-LDAP_USER_DN_TEMPLATES=uid={{username}},ou=users,dc=company,dc=local,cn={{username}},cn=Users,dc=company,dc=local
+LDAP_USER_DN_TEMPLATES=cn={{username}},OU=Users,DC=company,DC=local;uid={{username}},OU=Users,DC=company,DC=local
 ```
 
 Hinweis zu `LDAP_USER_DN_TEMPLATES`:
-- Werte werden komma-separiert gelesen.
+- Werte werden mit `;` (Semikolon) oder Zeilenumbruch getrennt.
 - Jeder Eintrag wird mit `{{username}}` ersetzt.
 - Falls leer, werden Standard-Kandidaten erzeugt (`uid=...` und `cn=...` auf Basis von `LDAP_USER_SEARCH_BASE`).
+
+## Windows Server 2019 / Active Directory Empfehlung
+
+Fuer AD mit Username-Login (`max.mustermann`) sind diese Werte ein guter Start:
+
+```env
+LDAP_HOST=<dc-hostname-oder-ip>
+LDAP_PORT=389
+LDAP_USE_TLS=false
+LDAP_BASE_DN=DC=test,DC=uni-hannover,DC=de
+LDAP_USER_SEARCH_BASE=OU=Users,DC=test,DC=uni-hannover,DC=de
+LDAP_DOMAIN=test.uni-hannover.de
+LDAP_USER_DN_TEMPLATES=CN={{username}},OU=Users,DC=test,DC=uni-hannover,DC=de
+```
+
+Optional (falls `CN={{username}}` nicht passt):
+- `LDAP_USER_DN_TEMPLATES=CN={{username}},OU=Users,DC=test,DC=uni-hannover,DC=de;UID={{username}},OU=Users,DC=test,DC=uni-hannover,DC=de`
+- Oder UPN-Login direkt im Frontend verwenden (`max.mustermann@test.uni-hannover.de`).
 
 ## Login-Formate
 
