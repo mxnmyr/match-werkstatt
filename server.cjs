@@ -288,6 +288,37 @@ function convertMongoDocs(docs) {
   return docs.map(convertMongoDoc);
 }
 
+function parseViewerRole(req) {
+  const viewerRole = (req.query.viewerRole || req.headers['x-viewer-role'] || '').toString().toLowerCase();
+  return ['client', 'workshop', 'admin'].includes(viewerRole) ? viewerRole : null;
+}
+
+function sanitizeOrderForViewer(order, viewerRole) {
+  if (viewerRole === 'client') {
+    const { internalWorkshopNote, ...orderWithoutInternalNote } = order;
+    return orderWithoutInternalNote;
+  }
+  return order;
+}
+
+function parseQuantity(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return 1;
+  }
+  return Math.floor(parsed);
+}
+
+function isStaticIpPath(networkPath) {
+  if (!networkPath || typeof networkPath !== 'string') {
+    return false;
+  }
+
+  const normalized = networkPath.trim();
+  const uncIpRegex = /^\\\\(?:\d{1,3}\.){3}\d{1,3}\\/;
+  return uncIpRegex.test(normalized);
+}
+
 // === FILE UPLOAD API ===
 app.post('/api/upload', upload.single('file'), (req, res) => {
   try {
@@ -806,6 +837,7 @@ app.delete('/api/users/:id', async (req, res) => {
 app.get('/api/orders', async (req, res) => {
   try {
     const { client, db } = await getDB();
+    const viewerRole = parseViewerRole(req);
     
     // Load all orders
     const orders = await db.collection('Order').find({})
@@ -863,7 +895,7 @@ app.get('/api/orders', async (req, res) => {
       .sort({ createdAt: -1 })
       .toArray();
       
-      return {
+      return sanitizeOrderForViewer({
         ...order,
         id: order._id.toString(),
         _id: undefined,
@@ -879,7 +911,7 @@ app.get('/api/orders', async (req, res) => {
           uploadedAt: order.titleImage.uploadedAt,
           hasImage: true
         } : null
-      };
+      }, viewerRole);
     }));
     
     await client.close();
@@ -895,6 +927,7 @@ app.get('/api/orders', async (req, res) => {
 app.get('/api/orders/:id', async (req, res) => {
   try {
     const { client, db } = await getDB();
+    const viewerRole = parseViewerRole(req);
     
     const order = await db.collection('Order').findOne({ _id: new ObjectId(req.params.id) });
     
@@ -952,7 +985,7 @@ app.get('/api/orders/:id', async (req, res) => {
     
     await client.close();
     
-    const enrichedOrder = {
+    const enrichedOrder = sanitizeOrderForViewer({
       ...order,
       id: order._id.toString(),
       _id: undefined,
@@ -968,7 +1001,7 @@ app.get('/api/orders/:id', async (req, res) => {
         uploadedAt: order.titleImage.uploadedAt,
         hasImage: true
       } : null
-    };
+    }, viewerRole);
     
     console.log('GET /api/orders/:id - Loaded order from MongoDB:', enrichedOrder.id);
     res.json(enrichedOrder);
@@ -982,6 +1015,7 @@ app.get('/api/orders/:id', async (req, res) => {
 app.get('/api/orders/barcode/:code', async (req, res) => {
   try {
     const { client, db } = await getDB();
+    const viewerRole = parseViewerRole(req);
     const code = req.params.code;
     
     console.log('Searching for order with barcode/orderNumber:', code);
@@ -1043,7 +1077,7 @@ app.get('/api/orders/barcode/:code', async (req, res) => {
     
     await client.close();
     
-    const enrichedOrder = {
+    const enrichedOrder = sanitizeOrderForViewer({
       ...order,
       id: order._id.toString(),
       _id: undefined,
@@ -1059,7 +1093,7 @@ app.get('/api/orders/barcode/:code', async (req, res) => {
         uploadedAt: order.titleImage.uploadedAt,
         hasImage: true
       } : null
-    };
+    }, viewerRole);
     
     console.log('GET /api/orders/barcode/:code - Found order:', enrichedOrder.orderNumber || enrichedOrder.id);
     res.json(enrichedOrder);
@@ -1088,7 +1122,7 @@ app.put('/api/orders/:id', async (req, res) => {
       orderType, subTasks, documents, components, revisionRequest, revisionComment,
       userId, userName, materialOrderedByWorkshop, materialOrderedByClient,
       materialOrderedByClientConfirmed, materialAvailable, confirmationNote,
-      confirmationDate, canEdit, titleImage
+      confirmationDate, canEdit, titleImage, internalWorkshopNote
     } = req.body;
     
     console.log('Extracted documents:', documents);
@@ -1150,6 +1184,7 @@ app.put('/api/orders/:id', async (req, res) => {
     if (actualHours !== undefined) updateData.actualHours = actualHours;
     if (assignedTo !== undefined) updateData.assignedTo = assignedTo;
     if (notes !== undefined) updateData.notes = notes;
+    if (internalWorkshopNote !== undefined) updateData.internalWorkshopNote = internalWorkshopNote;
     if (orderType !== undefined) updateData.orderType = orderType;
     if (subTasks !== undefined) updateData.subTasks = subTasks || [];
     
@@ -1215,7 +1250,7 @@ app.put('/api/orders/:id', async (req, res) => {
             title: component.title || component.name,
             description: component.description || '',
             material: component.material || '',
-            quantity: component.quantity || 1,
+            quantity: parseQuantity(component.quantity),
             notes: component.notes || '',
             orderId: new ObjectId(req.params.id),
             createdAt: new Date(),
@@ -1559,6 +1594,7 @@ app.post('/api/orders', async (req, res) => {
       actualHours: orderData.actualHours || 0,
       assignedTo: orderData.assignedTo || null,
       notes: orderData.notes || '',
+      internalWorkshopNote: orderData.internalWorkshopNote || '',
       orderType: orderData.orderType,
       subTasks: orderData.subTasks || [],
       documents: documents || [],
@@ -1590,7 +1626,7 @@ app.post('/api/orders', async (req, res) => {
           title: component.title || component.name,
           description: component.description || '',
           material: component.material || '',
-          quantity: component.quantity || 1,
+          quantity: parseQuantity(component.quantity),
           notes: component.notes || '',
           orderId: result.insertedId,
           createdAt: new Date(),
@@ -1709,7 +1745,7 @@ app.post('/api/orders/:orderId/components', async (req, res) => {
       title: title || name,
       description: description || '',
       material: material || '',
-      quantity: quantity || 1,
+      quantity: parseQuantity(quantity),
       notes: notes || '',
       orderId: new ObjectId(req.params.orderId),
       createdAt: new Date(),
@@ -1761,7 +1797,7 @@ app.put('/api/components/:id', async (req, res) => {
     if (name !== undefined) updateData.name = name;
     if (description !== undefined) updateData.description = description;
     if (material !== undefined) updateData.material = material;
-    if (quantity !== undefined) updateData.quantity = quantity;
+    if (quantity !== undefined) updateData.quantity = parseQuantity(quantity);
     if (notes !== undefined) updateData.notes = notes;
     
     // Update component
@@ -2644,6 +2680,13 @@ app.post('/api/admin/network-config', async (req, res) => {
     if (!networkPath) {
       return res.status(400).json({ success: false, error: 'Netzwerkpfad ist erforderlich' });
     }
+
+    if (isStaticIpPath(networkPath)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Statische IP-Pfade sind nicht erlaubt. Bitte verwenden Sie einen DNS-Hostnamen oder ein gemapptes Laufwerk.'
+      });
+    }
     
     // Test if path exists
     const pathExists = fs.existsSync(networkPath);
@@ -3068,8 +3111,10 @@ wss.on('connection', (ws) => {
   }));
 });
 
-server.listen(port, '0.0.0.0', async () => {
-  console.log(`Backend listening on http://0.0.0.0:${port}`);
+const serverHost = process.env.HOST || undefined;
+
+server.listen(port, serverHost, async () => {
+  console.log(`Backend listening on port ${port}`);
   
   // Initialize MongoDB indexes
   await initializeIndexes();
